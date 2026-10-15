@@ -1,0 +1,328 @@
+---
+title: "Overall_RNA"
+author: "Shan Jiang"
+date: "2025-03-08"
+output: html_document
+---
+
+```{r}
+MODEL_data_new <- read_tsv("ALL_Combined_10082026.tsv", col_names = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(rstatix)
+
+# =========================
+# RNA group comparison plot
+# =========================
+
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+data_all <- MODEL_data_new %>%
+  select(Group, RNA_RPKM) %>%
+  filter(
+    !is.na(Group),
+    !is.na(RNA_RPKM)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  )
+
+# =========================
+# Group means + SD
+# =========================
+
+data_summary <- data_all %>%
+  group_by(Group) %>%
+  summarise(
+    Average_Score = mean(RNA_RPKM, na.rm = TRUE),
+    SD = sd(RNA_RPKM, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(data_summary)
+
+
+# =========================
+# Overall Kruskal-Wallis test
+# =========================
+
+kw <- kruskal_test(
+  data_all,
+  RNA_RPKM ~ Group
+)
+
+print(kw)
+
+
+# =========================
+# Pairwise Wilcoxon tests
+# =========================
+
+pairwise_res <- data_all %>%
+  pairwise_wilcox_test(
+    RNA_RPKM ~ Group,
+    p.adjust.method = "fdr"
+  ) %>%
+  mutate(
+    p_label = case_when(
+      p.adj < 0.0001 ~ "****",
+      p.adj < 0.001  ~ "***",
+      p.adj < 0.01   ~ "**",
+      p.adj < 0.05   ~ "*",
+      TRUE           ~ "ns"
+    )
+  )
+
+print(pairwise_res)
+
+
+# =========================
+# Dynamic y positions
+# =========================
+
+plot_max <- max(
+  data_summary$Average_Score + data_summary$SD,
+  na.rm = TRUE
+)
+
+step_size <- plot_max * 0.12
+
+pairwise_res$y.position <- plot_max +
+  step_size * seq_len(nrow(pairwise_res))
+
+
+# =========================
+# Plot
+# =========================
+
+p <- ggplot(
+  data_summary,
+  aes(
+    x = Group,
+    y = Average_Score,
+    fill = Group
+  )
+) +
+
+  geom_col(
+    width = 0.6,
+    color = "black"
+  ) +
+
+  geom_errorbar(
+    aes(
+      ymin = pmax(Average_Score - SD, 0),
+      ymax = Average_Score + SD
+    ),
+    width = 0.2,
+    linewidth = 0.8
+  ) +
+
+  geom_text(
+    aes(
+      label = sprintf("%.2f", Average_Score)
+    ),
+    vjust = -0.4,
+    size = 5
+  ) +
+
+  stat_pvalue_manual(
+    pairwise_res,
+    label = "p_label",
+    xmin = "group1",
+    xmax = "group2",
+    y.position = "y.position",
+    tip.length = 0.01,
+    bracket.size = 0.5,
+    size = 5,
+    inherit.aes = FALSE
+  ) +
+
+  annotate(
+    "text",
+    x = 1.5,
+    y = max(pairwise_res$y.position) + step_size,
+    label = paste0(
+      "Kruskal-Wallis, p = ",
+      signif(kw$p, 3)
+    ),
+    size = 5,
+    hjust = 0
+  ) +
+
+  scale_fill_manual(
+    values = c(
+      "C_H_M_H" = "#F28C9D",
+      "C_H_M_L" = "#F3E065",
+      "C_L_M_H" = "#65C9F3",
+      "C_L_M_L" = "#9EAAE0"
+    )
+  ) +
+
+  scale_y_continuous(
+    limits = c(
+      0,
+      max(pairwise_res$y.position) + step_size * 2
+    ),
+    expand = c(0, 0)
+  ) +
+
+  labs(
+    title = "RNA Expression Across Groups",
+    x = "Group",
+    y = "RNA Expression Level (RPKM)"
+  ) +
+
+  theme_classic(base_size = 14) +
+
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    ),
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    legend.position = "none"
+  )
+
+print(p)
+
+# ggsave(
+#   "RNA_RPKM_group_comparison.pdf",
+#   p,
+#   width = 7,
+#   height = 5
+# )
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+
+# =========================
+# RNA average expression barplot
+# directly from MODEL_data_new
+# =========================
+
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+data_summary <- MODEL_data_new %>%
+  select(Group, RNA_RPKM) %>%
+  filter(
+    !is.na(Group),
+    !is.na(RNA_RPKM)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    Average_Score = mean(RNA_RPKM, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(data_summary)
+
+
+# =========================
+# Y-axis range
+# =========================
+
+y_max <- max(
+  data_summary$Average_Score,
+  na.rm = TRUE
+) * 1.15
+
+
+# =========================
+# Plot
+# =========================
+
+p <- ggbarplot(
+  data_summary,
+  x = "Group",
+  y = "Average_Score",
+  fill = "Group",
+  width = 0.6,
+  label = sprintf(
+    "%.2f",
+    data_summary$Average_Score
+  ),
+  label.pos = "out",
+  lab.vjust = -0.5,
+  palette = c(
+    "#F28C9D",
+    "#F3E065",
+    "#65C9F3",
+    "#9EAAE0"
+  )
+) +
+
+  scale_y_continuous(
+    limits = c(0, y_max),
+    expand = c(0, 0)
+  ) +
+
+  labs(
+    title = "RNA Average Expression",
+    x = "Group",
+    y = "Average RNA Expression (RPKM)"
+  ) +
+
+  theme_classic(base_size = 14) +
+
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    ),
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    legend.position = "none"
+  )
+
+print(p)
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,335 @@
+---
+title: "Mutation_4group"
+author: "Shan Jiang"
+date: "2025-03-13"
+output: html_document
+---
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# ---- 1) Read substitution table from file ----
+df <- read.delim(
+  "01.SNV_frequency_4groups.tsv",
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE
+)
+
+# ---- 2) Compute total across all groups per type and reorder ----
+df <- df %>%
+  rowwise() %>%
+  mutate(total = sum(c_across(-type))) %>%
+  ungroup()
+
+# Reorder types based on total descending
+subs_order <- df %>%
+  arrange(desc(total)) %>%
+  pull(type)
+
+# ---- 3) Reshape + set factor levels ----
+custom_colors <- c(
+  "M_H_C_H" = "#F28C9D",
+  "M_H_C_L" = "#65C9F3C9",
+  "M_L_C_H" = "#F3E065",
+  "M_L_C_L" = "#9EAAE0"
+)
+
+df_long <- df %>%
+  select(-total) %>%
+  pivot_longer(
+    cols = -type,
+    names_to = "Group",
+    values_to = "Frequency"
+  ) %>%
+  mutate(
+    Group = factor(Group, levels = names(custom_colors)),
+    type = factor(type, levels = subs_order)
+  )
+
+# ---- 4) Plot ----
+p_ranked <- ggplot(
+  df_long,
+  aes(x = type, y = Frequency, fill = Group)
+) +
+  geom_col(
+    width = 0.7,
+    color = "black",
+    linewidth = 0.3
+  ) +
+  facet_wrap(~ Group, ncol = 2) +
+  scale_fill_manual(
+    values = custom_colors,
+    guide = "none"
+  ) +
+  labs(
+    title = "Substitution Frequencies per Group (Ranked by Total)",
+    x = "Substitution Type (Sorted by Total)",
+    y = "Frequency"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 0.6
+    ),
+    strip.background = element_rect(
+      fill = "grey95",
+      color = "grey80"
+    ),
+    strip.text = element_text(
+      face = "bold"
+    )
+  )
+
+print(p_ranked)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(scales)
+library(patchwork)
+
+# ============================
+# 1) Read Data
+# ============================
+df <- read.delim(
+  "01.Mutation_CPD_overlap_4groups.tsv",
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE
+)
+
+# Your file contains:
+# Group
+# Cluster_Number
+# Unique_Mutation_Sites
+# Mutation_CPD_Overlap
+# Overlap_Percent
+
+# Convert percentage to ratio for donut plotting
+df <- df %>%
+  mutate(
+    Overlap = Overlap_Percent / 100,
+    NonOverlap = 1 - Overlap
+  )
+
+# ============================
+# 2) Colors
+# ============================
+group_colors <- c(
+  "M_H_C_H" = "#F28C9D",
+  "M_H_C_L" = "#65C9F3",
+  "M_L_C_H" = "#F3E065",
+  "M_L_C_L" = "#9EAAE0"
+)
+
+# ============================
+# 3) Donut Function
+# ============================
+make_donut <- function(group_name, overlap, nonoverlap, color) {
+
+  data <- data.frame(
+    Part = c("Overlap", "NonOverlap"),
+    Ratio = c(overlap, nonoverlap)
+  ) %>%
+    mutate(
+      Label = ifelse(
+        Part == "Overlap",
+        sprintf("%.1f%%", 100 * Ratio),
+        ""
+      )
+    )
+
+  ggplot(data, aes(x = 2, y = Ratio, fill = Part)) +
+    geom_col(
+      width = 1,
+      color = "white",
+      linewidth = 0.6
+    ) +
+    coord_polar(theta = "y") +
+    xlim(0.5, 2.5) +
+    scale_fill_manual(
+      values = c(
+        "Overlap" = unname(color),
+        "NonOverlap" = alpha(unname(color), 0.3)
+      )
+    ) +
+    theme_void() +
+    geom_text(
+      aes(label = Label),
+      position = position_stack(vjust = 0.5),
+      size = 5,
+      fontface = "bold"
+    ) +
+    labs(title = group_name) +
+    theme(
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold"
+      ),
+      legend.position = "none"
+    )
+}
+
+# ============================
+# 4) Create Four Donuts
+# ============================
+p1 <- make_donut(
+  "M_H_C_H",
+  df$Overlap[df$Group == "M_H_C_H"],
+  df$NonOverlap[df$Group == "M_H_C_H"],
+  group_colors["M_H_C_H"]
+)
+
+p2 <- make_donut(
+  "M_H_C_L",
+  df$Overlap[df$Group == "M_H_C_L"],
+  df$NonOverlap[df$Group == "M_H_C_L"],
+  group_colors["M_H_C_L"]
+)
+
+p3 <- make_donut(
+  "M_L_C_H",
+  df$Overlap[df$Group == "M_L_C_H"],
+  df$NonOverlap[df$Group == "M_L_C_H"],
+  group_colors["M_L_C_H"]
+)
+
+p4 <- make_donut(
+  "M_L_C_L",
+  df$Overlap[df$Group == "M_L_C_L"],
+  df$NonOverlap[df$Group == "M_L_C_L"],
+  group_colors["M_L_C_L"]
+)
+
+# ============================
+# 5) Arrange in 2 x 2 Grid
+# ============================
+final_plot <- (p1 | p2) / (p3 | p4) +
+  plot_annotation(
+    title = "Mutation-CPD Overlap Ratio per Group"
+  ) &
+  theme(
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold",
+      size = 16
+    )
+  )
+
+print(final_plot)
+```
+
+
+
+#ALL
+```{r}
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+# ============================
+# 1) Read Data
+# ============================
+df <- read.delim(
+  "01.Mutation_CPD_overlap_4groups.tsv",
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE
+)
+
+# ============================
+# 2) Donut Function
+# ============================
+make_donut <- function(group_name, overlap, nonoverlap, color) {
+  
+  data <- data.frame(
+    Part = c("Overlap", "NonOverlap"),
+    Ratio = c(overlap, nonoverlap)
+  ) %>%
+    mutate(
+      Label = ifelse(
+        Part == "Overlap",
+        sprintf("%.1f%%", 100 * Ratio),
+        ""
+      )
+    )
+
+  ggplot(data, aes(x = 2, y = Ratio, fill = Part)) +
+    geom_col(
+      width = 1,
+      color = "white",
+      linewidth = 0.6
+    ) +
+    coord_polar(theta = "y") +
+    xlim(0.5, 2.5) +
+    scale_fill_manual(
+      values = c(
+        "Overlap" = unname(color),
+        "NonOverlap" = alpha(unname(color), 0.3)
+      )
+    ) +
+    theme_void() +
+    geom_text(
+      aes(label = Label),
+      position = position_stack(vjust = 0.5),
+      size = 5,
+      fontface = "bold"
+    ) +
+    labs(title = group_name) +
+    theme(
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold"
+      ),
+      legend.position = "none"
+    )
+}
+
+# ============================
+# 3) Overall Overlap Calculation
+# ============================
+overlap_count <- sum(df$Mutation_CPD_Overlap)
+total_count   <- sum(df$Unique_Mutation_Sites)
+
+overlap_ratio <- overlap_count / total_count
+nonoverlap_ratio <- 1 - overlap_ratio
+
+# Check values
+cat("Total mutation sites:", total_count, "\n")
+cat("Total overlap sites:", overlap_count, "\n")
+cat("Overall overlap ratio:", overlap_ratio, "\n")
+cat("Overall overlap percent:", overlap_ratio * 100, "%\n")
+
+# ============================
+# 4) Set Color
+# ============================
+my_color <- "#7678ed"
+
+# ============================
+# 5) Generate Overall Donut
+# ============================
+p_overall <- make_donut(
+  group_name = "Overall Mutation-CPD Overlap",
+  overlap = overlap_ratio,
+  nonoverlap = nonoverlap_ratio,
+  color = my_color
+)
+
+print(p_overall)
+
+```
+
+
+
+

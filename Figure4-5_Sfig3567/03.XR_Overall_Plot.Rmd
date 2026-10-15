@@ -1,0 +1,1255 @@
+---
+title: "Overview_PLOT"
+author: "Shan Jiang"
+date: "2024-12-23"
+output: html_document
+---
+
+```{r}
+library(readr)
+library(dplyr)
+
+df_all <- read_tsv("ALL_Combined.bed", col_names = TRUE)
+
+# Create averaged 3D distance column, remove Dist_A / Dist_B,
+# and move Group to the last column
+MODEL_data_new <- df_all %>%
+  mutate(`3D_Distance` = (Dist_A + Dist_B) / 2) %>%
+  select(-Dist_A, -Dist_B) %>%
+  relocate(Group, .after = last_col())
+
+# Check result
+head(MODEL_data_new)
+
+# Save new file
+write_tsv(MODEL_data_new, "ALL_Combined_10082026.tsv")
+```
+
+
+
+```{r}
+# ============================================================
+# LOAD REQUIRED LIBRARIES
+# ============================================================
+
+library(ggplot2)
+library(gghalves)
+library(ggdist)
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+
+
+# ============================================================
+# 1. PREPARE DATA
+# ============================================================
+
+df_long <- MODEL_data_new %>%
+  select(Group, CPD_Enrichment) %>%
+  filter(
+    !is.na(Group),
+    !is.na(CPD_Enrichment)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = c(
+        "C_H_M_H",
+        "C_H_M_L",
+        "C_L_M_H",
+        "C_L_M_L"
+      )
+    )
+  )
+
+
+# ============================================================
+# 2. PAIRWISE COMPARISONS
+# ============================================================
+
+comparisons <- list(
+  c("C_H_M_H", "C_H_M_L"),
+  c("C_H_M_H", "C_L_M_H"),
+  c("C_H_M_H", "C_L_M_L"),
+  c("C_H_M_L", "C_L_M_H"),
+  c("C_H_M_L", "C_L_M_L"),
+  c("C_L_M_H", "C_L_M_L")
+)
+
+
+# ============================================================
+# 3. KRUSKAL-WALLIS TEST
+# ============================================================
+
+kruskal_res <- kruskal.test(
+  CPD_Enrichment ~ Group,
+  data = df_long
+)
+
+kw_stat <- round(
+  as.numeric(kruskal_res$statistic),
+  3
+)
+
+kw_p <- signif(
+  kruskal_res$p.value,
+  3
+)
+
+
+# ============================================================
+# 4. RAINCLOUD PLOT
+# ============================================================
+
+p <- ggplot(
+  df_long,
+  aes(
+    x = Group,
+    y = CPD_Enrichment,
+    fill = Group,
+    color = Group
+  )
+) +
+
+  # ----------------------------------------------------------
+  # Half violin
+  # ----------------------------------------------------------
+
+  ggdist::stat_halfeye(
+    adjust = 0.5,
+    justification = -0.2,
+    .width = 0,
+    point_colour = NA
+  ) +
+
+  # ----------------------------------------------------------
+  # Jittered individual clusters
+  # ----------------------------------------------------------
+
+  geom_jitter(
+    width = 0.1,
+    alpha = 0.7,
+    size = 1
+  ) +
+
+  # ----------------------------------------------------------
+  # Boxplot
+  # ----------------------------------------------------------
+
+  geom_boxplot(
+    width = 0.2,
+    outlier.shape = NA,
+    alpha = 1,
+    color = "black",
+    linewidth = 0.8
+  ) +
+
+  # ----------------------------------------------------------
+  # Kruskal-Wallis
+  # ----------------------------------------------------------
+
+  annotate(
+    "text",
+    x = 4.2,
+    y = max(
+      df_long$CPD_Enrichment,
+      na.rm = TRUE
+    ) * 0.95,
+    label = paste(
+      "Kruskal-Wallis:",
+      "\nChi-squared =",
+      kw_stat,
+      "\nP =",
+      kw_p
+    ),
+    size = 3,
+    hjust = 1,
+    vjust = 1,
+    fontface = "bold",
+    color = "black"
+  ) +
+
+  # ----------------------------------------------------------
+  # Pairwise Wilcoxon tests
+  # ----------------------------------------------------------
+
+  stat_compare_means(
+    comparisons = comparisons,
+    method = "wilcox.test",
+    label = "p.signif",
+    p.adjust.method = "fdr"
+  ) +
+
+  # ----------------------------------------------------------
+  # Labels
+  # ----------------------------------------------------------
+
+  labs(
+    title = "CPD Enrichment Across Mutation–CPD Groups",
+    x = "Group",
+    y = "CPD Enrichment"
+  ) +
+
+  # ----------------------------------------------------------
+  # Colors
+  # ----------------------------------------------------------
+
+  scale_fill_manual(
+    values = c(
+      "C_H_M_H" = "#F28C9D",
+      "C_H_M_L" = "#F3E065",
+      "C_L_M_H" = "#65C9F3",
+      "C_L_M_L" = "#9EAAE0"
+    )
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "C_H_M_H" = "#F28C9D",
+      "C_H_M_L" = "#F3E065",
+      "C_L_M_H" = "#65C9F3",
+      "C_L_M_L" = "#9EAAE0"
+    )
+  ) +
+
+  # ----------------------------------------------------------
+  # Theme
+  # ----------------------------------------------------------
+
+  theme_classic(
+    base_size = 14
+  ) +
+
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    ),
+
+    legend.position = "none"
+  )
+
+
+# ============================================================
+# 5. SHOW PLOT
+# ============================================================
+
+print(p)
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+
+
+# ============================================================
+# 1. Define XR columns and group order
+# ============================================================
+
+xr_cols <- c(
+  "XR_12m",
+  "XR_1h",
+  "XR_4h",
+  "XR_8h",
+  "XR_16h",
+  "XR_24h",
+  "XR_48h"
+)
+
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+
+# ============================================================
+# 2. Convert to long format
+# ============================================================
+
+df_long <- MODEL_data_new %>%
+  select(Group, all_of(xr_cols)) %>%
+  pivot_longer(
+    cols = all_of(xr_cols),
+    names_to = "Timepoint",
+    values_to = "XR_value"
+  ) %>%
+  filter(
+    !is.na(Group),
+    !is.na(XR_value)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    ),
+    Timepoint = factor(
+      Timepoint,
+      levels = xr_cols
+    )
+  )
+
+
+# ============================================================
+# 3. Pairwise Wilcoxon function
+# ============================================================
+
+make_pairwise_heatmap_df <- function(data_one_tp) {
+  
+  groups <- group_order
+  
+  
+  # ----------------------------------------------------------
+  # Group mean
+  # ----------------------------------------------------------
+  
+  group_means <- data_one_tp %>%
+    group_by(Group) %>%
+    summarise(
+      mean_value = mean(XR_value, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  
+  # ----------------------------------------------------------
+  # All pair combinations
+  # ----------------------------------------------------------
+  
+  pair_df <- expand.grid(
+    Group1 = groups,
+    Group2 = groups,
+    stringsAsFactors = FALSE
+  ) %>%
+    as_tibble()
+  
+  
+  # ----------------------------------------------------------
+  # Difference and Wilcoxon P-value
+  # ----------------------------------------------------------
+  
+  pair_df <- pair_df %>%
+    rowwise() %>%
+    mutate(
+      
+      mean1 = group_means$mean_value[
+        match(Group1, as.character(group_means$Group))
+      ],
+      
+      mean2 = group_means$mean_value[
+        match(Group2, as.character(group_means$Group))
+      ],
+      
+      mean_diff = mean1 - mean2,
+      
+      abs_diff = abs(mean_diff),
+      
+      p_value = if (Group1 == Group2) {
+        
+        NA_real_
+        
+      } else {
+        
+        x <- data_one_tp %>%
+          filter(Group == Group1) %>%
+          pull(XR_value)
+        
+        y <- data_one_tp %>%
+          filter(Group == Group2) %>%
+          pull(XR_value)
+        
+        wilcox.test(x, y)$p.value
+      }
+    ) %>%
+    ungroup()
+  
+  
+  # ----------------------------------------------------------
+  # FDR correction
+  # ----------------------------------------------------------
+  
+  non_diag <- !is.na(pair_df$p_value)
+  
+  pair_df$p_adj <- NA_real_
+  
+  pair_df$p_adj[non_diag] <- p.adjust(
+    pair_df$p_value[non_diag],
+    method = "fdr"
+  )
+  
+  
+  # ----------------------------------------------------------
+  # Significance
+  # ----------------------------------------------------------
+  
+  pair_df <- pair_df %>%
+    mutate(
+      signif_label = case_when(
+        is.na(p_adj)  ~ "",
+        p_adj < 0.0001 ~ "****",
+        p_adj < 0.001  ~ "***",
+        p_adj < 0.01   ~ "**",
+        p_adj < 0.05   ~ "*",
+        TRUE           ~ ""
+      )
+    )
+  
+  
+  return(pair_df)
+}
+
+
+# ============================================================
+# 4. Apply to all XR timepoints
+# ============================================================
+
+heatmap_df <- df_long %>%
+  group_split(Timepoint) %>%
+  map_dfr(
+    function(tp_df) {
+      
+      tp_name <- unique(tp_df$Timepoint)
+      
+      out <- make_pairwise_heatmap_df(tp_df)
+      
+      out$Timepoint <- tp_name
+      
+      out
+    }
+  )
+
+
+# ============================================================
+# 5. Factor order
+# ============================================================
+
+heatmap_df <- heatmap_df %>%
+  mutate(
+    Group1 = factor(
+      Group1,
+      levels = group_order
+    ),
+    
+    Group2 = factor(
+      Group2,
+      levels = rev(group_order)
+    ),
+    
+    Timepoint = factor(
+      Timepoint,
+      levels = xr_cols
+    )
+  )
+
+
+print(heatmap_df)
+
+write.csv(
+  heatmap_df,
+  "XR_feature_pairwise_wilcox_results.csv",
+  row.names = FALSE
+)
+
+
+# ============================================================
+# 6. Plot
+# ============================================================
+
+p <- ggplot(
+  heatmap_df,
+  aes(
+    x = Group1,
+    y = Group2,
+    fill = mean_diff
+  )
+) +
+  
+  geom_tile(
+    color = "white",
+    linewidth = 0.8
+  ) +
+  
+  geom_text(
+    aes(label = signif_label),
+    color = "black",
+    size = 5,
+    fontface = "bold"
+  ) +
+  
+  facet_wrap(
+    ~ Timepoint,
+    ncol = 3
+  ) +
+  
+  scale_fill_gradient2(
+    low = "#7678ed",
+    mid = "white",
+    high = "#fe6d73",
+    midpoint = 0,
+    name = "Mean difference"
+  ) +
+  
+  labs(
+    title = "Pairwise XR Differences Between Groups at Each Time Point",
+    x = "Group",
+    y = "Group"
+  ) +
+  
+  theme_classic(base_size = 14) +
+  
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    )
+  )
+
+
+print(p)
+
+# ggsave(
+#   "XR_pairwise_group_heatmap_by_timepoint.pdf",
+#   p,
+#   width = 12,
+#   height = 10
+# )
+```
+
+```{r}
+library(dplyr)
+
+overall_test_df <- df_long %>%
+  group_by(Timepoint) %>%
+  summarise(
+    statistic = as.numeric(
+      kruskal.test(XR_value ~ Group)$statistic
+    ),
+    
+    p_value = kruskal.test(
+      XR_value ~ Group
+    )$p.value,
+    
+    .groups = "drop"
+  ) %>%
+  
+  mutate(
+    
+    p_adj = p.adjust(
+      p_value,
+      method = "fdr"
+    ),
+    
+    signif_label = case_when(
+      p_adj < 0.0001 ~ "****",
+      p_adj < 0.001  ~ "***",
+      p_adj < 0.01   ~ "**",
+      p_adj < 0.05   ~ "*",
+      TRUE           ~ "ns"
+    )
+  )
+
+
+print(overall_test_df)
+
+write.csv(
+  overall_test_df,
+  "XR_timepoint_overall_kruskal_results.csv",
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+library(pheatmap)
+
+
+# ============================================================
+# Matrix for heatmap
+# ============================================================
+
+overall_mat <- matrix(
+  -log10(overall_test_df$p_adj),
+  nrow = 1,
+  dimnames = list(
+    "Overall group diff",
+    as.character(overall_test_df$Timepoint)
+  )
+)
+
+
+# ============================================================
+# Display adjusted P-value and significance
+# ============================================================
+
+overall_labels <- matrix(
+  
+  paste0(
+    sprintf(
+      "%.2e",
+      overall_test_df$p_adj
+    ),
+    "\n",
+    overall_test_df$signif_label
+  ),
+  
+  nrow = 1,
+  dimnames = dimnames(overall_mat)
+)
+
+
+# ============================================================
+# Plot
+# ============================================================
+
+pheatmap(
+  overall_mat,
+  scale = "none",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  color = colorRampPalette(
+    c(
+      "#7678ed",
+      "white",
+      "#fe6d73"
+    )
+  )(100),
+  display_numbers = overall_labels,
+  number_color = "black",
+  fontsize_number = 10,
+  main = "Overall XR Group Difference at Each Time Point",
+  border_color = "grey80"
+)
+```
+
+```{r}
+library(dplyr)
+
+
+# ============================================================
+# Define group order
+# ============================================================
+
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+
+# ============================================================
+# Define XR columns
+# ============================================================
+
+xr_cols <- c(
+  "XR_12m",
+  "XR_1h",
+  "XR_4h",
+  "XR_8h",
+  "XR_16h",
+  "XR_24h",
+  "XR_48h"
+)
+
+
+# ============================================================
+# XR sum for each cluster
+# ============================================================
+
+MODEL_data_new <- MODEL_data_new %>%
+  mutate(
+    XR_sum = rowSums(
+      select(
+        .,
+        all_of(xr_cols)
+      ),
+      na.rm = TRUE
+    )
+  )
+
+
+# ============================================================
+# Mean XR sum for each group
+# ============================================================
+
+group_xr_avg <- MODEL_data_new %>%
+  select(
+    Group,
+    XR_sum
+  ) %>%
+  filter(
+    !is.na(Group),
+    !is.na(XR_sum)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    mean_XR_sum = mean(
+      XR_sum,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+
+print(group_xr_avg)
+
+
+# ============================================================
+# Mean CPD enrichment
+# ============================================================
+
+cpd_group_mean <- MODEL_data_new %>%
+  select(
+    Group,
+    CPD_Enrichment
+  ) %>%
+  filter(
+    !is.na(Group),
+    !is.na(CPD_Enrichment)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    mean_CPD_Enrichment = mean(
+      CPD_Enrichment,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+
+print(cpd_group_mean)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+
+# ============================================================
+# 1. GROUP ORDER
+# ============================================================
+
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+
+# ============================================================
+# 2. XR COLUMNS
+# ============================================================
+
+xr_cols <- c(
+  "XR_12m",
+  "XR_1h",
+  "XR_4h",
+  "XR_8h",
+  "XR_16h",
+  "XR_24h",
+  "XR_48h"
+)
+
+
+# ============================================================
+# 3. XR SUM
+# ============================================================
+
+MODEL_data_new <- MODEL_data_new %>%
+  mutate(
+    XR_sum = rowSums(
+      select(
+        .,
+        all_of(xr_cols)
+      ),
+      na.rm = TRUE
+    )
+  )
+
+
+# ============================================================
+# 4. GROUP MEAN XR
+# ============================================================
+
+group_xr_avg <- MODEL_data_new %>%
+  select(
+    Group,
+    XR_sum
+  ) %>%
+  filter(
+    !is.na(Group),
+    !is.na(XR_sum)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    mean_XR_sum = mean(
+      XR_sum,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+
+# ============================================================
+# 5. GROUP MEAN CPD
+# ============================================================
+
+cpd_group_mean <- MODEL_data_new %>%
+  select(
+    Group,
+    CPD_Enrichment
+  ) %>%
+  filter(
+    !is.na(Group),
+    !is.na(CPD_Enrichment)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    mean_CPD_Enrichment = mean(
+      CPD_Enrichment,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+
+# ============================================================
+# 6. MERGE
+# ============================================================
+
+plot_df <- left_join(
+  cpd_group_mean,
+  group_xr_avg,
+  by = "Group"
+) %>%
+  arrange(Group)
+
+
+print(plot_df)
+
+
+# ============================================================
+# 7. DAMAGE MULTIPLIER
+# ============================================================
+
+CPD_multiplier <- 4
+
+
+plot_df <- plot_df %>%
+  mutate(
+    Damage_plot = mean_CPD_Enrichment * CPD_multiplier,
+    Repair_plot = mean_XR_sum
+  )
+
+
+print(plot_df)
+
+
+# ============================================================
+# 8. LONG FORMAT
+# ============================================================
+
+circular_data_long <- bind_rows(
+  
+  data.frame(
+    Group = plot_df$Group,
+    Type = "Damage",
+    Value = plot_df$Damage_plot,
+    Raw_Value = plot_df$mean_CPD_Enrichment,
+    stringsAsFactors = FALSE
+  ),
+  
+  data.frame(
+    Group = plot_df$Group,
+    Type = "Repair",
+    Value = plot_df$Repair_plot,
+    Raw_Value = plot_df$mean_XR_sum,
+    stringsAsFactors = FALSE
+  )
+)
+
+
+# ============================================================
+# 9. DEFINE DAMAGE/REPAIR ORDER
+# ============================================================
+
+circular_data_long$Category_Split <- interaction(
+  circular_data_long$Group,
+  circular_data_long$Type,
+  sep = ":"
+)
+
+
+circular_data_long$Category_Split <- factor(
+  
+  circular_data_long$Category_Split,
+  
+  levels = c(
+    
+    "C_H_M_H:Damage",
+    "C_H_M_H:Repair",
+    
+    "C_H_M_L:Damage",
+    "C_H_M_L:Repair",
+    
+    "C_L_M_H:Damage",
+    "C_L_M_H:Repair",
+    
+    "C_L_M_L:Damage",
+    "C_L_M_L:Repair"
+  )
+)
+
+
+circular_data_long$Group <- factor(
+  circular_data_long$Group,
+  levels = group_order
+)
+
+
+# ============================================================
+# 10. LABEL RAW VALUES
+# ============================================================
+
+circular_data_long <- circular_data_long %>%
+  mutate(
+    label_text = ifelse(
+      Type == "Damage",
+      paste0(
+        "CPD=",
+        round(Raw_Value, 2)
+      ),
+      paste0(
+        "XR=",
+        round(Raw_Value, 2)
+      )
+    )
+  )
+
+
+# ============================================================
+# 11. PLOT
+# ============================================================
+
+plot_circle <- ggplot(
+  circular_data_long,
+  aes(
+    x = Category_Split,
+    y = Value,
+    fill = Group,
+    alpha = Type
+  )
+) +
+  
+  geom_bar(
+    stat = "identity",
+    position = "stack",
+    color = "black"
+  ) +
+  
+  coord_polar() +
+  
+  geom_vline(
+    xintercept = c(
+      2.5,
+      4.5,
+      6.5,
+      8.5
+    ),
+    linetype = "dashed",
+    color = "black",
+    linewidth = 0.8
+  ) +
+  
+  labs(
+    fill = "Group",
+    alpha = "Type",
+    x = NULL,
+    y = NULL,
+    title = paste0(
+      "Group-wise CPD and Repair Levels (CPD × ",
+      CPD_multiplier,
+      ")"
+    )
+  ) +
+  
+  scale_fill_manual(
+    values = c(
+      "C_H_M_H" = "#F28C9D",
+      "C_H_M_L" = "#F3E065",
+      "C_L_M_H" = "#65C9F3",
+      "C_L_M_L" = "#9EAAE0"
+    )
+  ) +
+  
+  scale_alpha_manual(
+    values = c(
+      "Damage" = 0.35,
+      "Repair" = 1
+    )
+  ) +
+  
+  theme_minimal(
+    base_size = 12
+  ) +
+  
+  theme(
+    panel.grid = element_line(
+      color = "lightgray",
+      linewidth = 0.6
+    ),
+    
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    
+    plot.title = element_text(
+      size = 12,
+      hjust = 0.5,
+      face = "bold"
+    )
+  )
+
+
+print(plot_circle)
+
+
+# ggsave(
+#   "circle_CPDx4_repair.png",
+#   plot = plot_circle,
+#   dpi = 600,
+#   width = 6,
+#   height = 4,
+#   units = "in"
+# )
+```
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# =========================
+# Repair average per group — time-course line plot
+# =========================
+
+# 1) Define XR columns and time order
+xr_cols <- c(
+  "XR_12m",
+  "XR_1h",
+  "XR_4h",
+  "XR_8h",
+  "XR_16h",
+  "XR_24h",
+  "XR_48h"
+)
+
+time_order <- c(
+  "12m",
+  "1h",
+  "4h",
+  "8h",
+  "16h",
+  "24h",
+  "48h"
+)
+
+# New CPD-first group naming
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+
+# =========================
+# 2) Calculate mean XR for each group at each time point
+# =========================
+
+df_summary <- MODEL_data_new %>%
+  select(Group, all_of(xr_cols)) %>%
+  filter(!is.na(Group)) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    across(
+      all_of(xr_cols),
+      ~ mean(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  )
+
+print(df_summary)
+
+
+# =========================
+# 3) Convert to long format
+# =========================
+
+df_long <- df_summary %>%
+  pivot_longer(
+    cols = all_of(xr_cols),
+    names_to = "Time",
+    values_to = "Repair_Level"
+  ) %>%
+  mutate(
+    Time = gsub("^XR_", "", Time),
+    
+    Time = factor(
+      Time,
+      levels = time_order
+    ),
+    
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  )
+
+print(df_long)
+
+
+# =========================
+# 4) Colors
+# =========================
+
+custom_colors <- c(
+  "C_H_M_H" = "#F28C9D",
+  "C_H_M_L" = "#F3E065",
+  "C_L_M_H" = "#65C9F3",
+  "C_L_M_L" = "#9EAAE0"
+)
+
+
+# =========================
+# 5) Plot
+# =========================
+
+p <- ggplot(
+  df_long,
+  aes(
+    x = Time,
+    y = Repair_Level,
+    group = Group,
+    color = Group
+  )
+) +
+
+  # dashed line before 16 h
+  geom_vline(
+    xintercept = 4.5,
+    linetype = "dashed",
+    color = "grey",
+    linewidth = 1
+  ) +
+
+  geom_line(
+    linewidth = 1.0
+  ) +
+
+  geom_point(
+    size = 2.5
+  ) +
+
+  scale_color_manual(
+    values = custom_colors
+  ) +
+
+  labs(
+    title = "Repair Over Time",
+    x = "Timepoint",
+    y = "Mean XR-seq RPKM",
+    color = "Group"
+  ) +
+
+  theme_classic(
+    base_size = 14
+  ) +
+
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    )
+  )
+
+
+print(p)
+
+# Optional save
+# ggsave(
+#   "Repair_Over_Time_auto.pdf",
+#   p,
+#   width = 6,
+#   height = 4
+# )
+```
+
+

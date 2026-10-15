@@ -1,0 +1,412 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+MODEL_data_new <- read_tsv("ALL_Combined_04032026.tsv", col_names = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(rstatix)
+
+# =========================
+# 3D Distance group comparison
+# =========================
+
+# 1) Define group order and colors
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+custom_colors <- c(
+  "C_H_M_H" = "#F28C9D",
+  "C_H_M_L" = "#F3E065",
+  "C_L_M_H" = "#65C9F3",
+  "C_L_M_L" = "#9EAAE0"
+)
+
+
+# 2) Prepare data
+df_combined <- MODEL_data_new %>%
+  select(Group, `3D_Distance`) %>%
+  filter(
+    !is.na(Group),
+    !is.na(`3D_Distance`)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    ),
+    Distance = `3D_Distance`
+  ) %>%
+  select(
+    Group,
+    Distance
+  )
+
+
+# 3) Mean per group
+group_mean <- df_combined %>%
+  group_by(Group) %>%
+  summarise(
+    mean_distance = mean(
+      Distance,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+print(group_mean)
+
+
+# 4) Overall Kruskal-Wallis test
+kw <- kruskal_test(
+  df_combined,
+  Distance ~ Group
+)
+
+print(kw)
+
+
+# 5) Pairwise Wilcoxon tests
+pairwise_res <- df_combined %>%
+  pairwise_wilcox_test(
+    Distance ~ Group,
+    p.adjust.method = "fdr"
+  ) %>%
+  mutate(
+    p_label = case_when(
+      p.adj < 0.0001 ~ "****",
+      p.adj < 0.001  ~ "***",
+      p.adj < 0.01   ~ "**",
+      p.adj < 0.05   ~ "*",
+      TRUE           ~ "ns"
+    )
+  )
+
+print(pairwise_res)
+
+
+# 6) Set bracket heights dynamically
+y_top <- max(
+  df_combined$Distance,
+  na.rm = TRUE
+)
+
+y_bottom <- min(
+  df_combined$Distance,
+  na.rm = TRUE
+)
+
+step_val <- 0.05 * (
+  y_top - y_bottom
+)
+
+if (step_val == 0) {
+  step_val <- 0.1
+}
+
+pairwise_res$y.position <- y_top +
+  step_val * seq_len(
+    nrow(pairwise_res)
+  )
+
+label_y <- max(
+  pairwise_res$y.position
+) + step_val
+
+mean_label_y <- y_top +
+  step_val * 0.3
+
+
+# 7) Plot
+p <- ggplot(
+  df_combined,
+  aes(
+    x = Group,
+    y = Distance,
+    fill = Group
+  )
+) +
+
+  geom_violin(
+    trim = TRUE,
+    alpha = 0.6
+  ) +
+
+  geom_boxplot(
+    width = 0.1,
+    outlier.shape = NA,
+    color = "black"
+  ) +
+
+  geom_text(
+    data = group_mean,
+    aes(
+      x = Group,
+      y = mean_label_y,
+      label = round(
+        mean_distance,
+        4
+      )
+    ),
+    inherit.aes = FALSE,
+    vjust = 0,
+    size = 5,
+    color = "black",
+    fontface = "bold"
+  ) +
+
+  stat_pvalue_manual(
+    pairwise_res,
+    label = "p_label",
+    xmin = "group1",
+    xmax = "group2",
+    y.position = "y.position",
+    tip.length = 0.01,
+    bracket.size = 0.5,
+    size = 5,
+    inherit.aes = FALSE
+  ) +
+
+  annotate(
+    "text",
+    x = 1.2,
+    y = label_y,
+    label = paste0(
+      "Kruskal-Wallis, p = ",
+      signif(
+        kw$p,
+        3
+      )
+    ),
+    size = 5,
+    hjust = 0
+  ) +
+
+  scale_fill_manual(
+    values = custom_colors
+  ) +
+
+  labs(
+    title = "3D Distance Distribution Across Groups",
+    x = "Group",
+    y = "3D Distance"
+  ) +
+
+  theme_classic(
+    base_size = 14
+  ) +
+
+  theme(
+    legend.position = "none",
+
+    axis.text.x = element_text(
+      size = 12,
+      face = "bold",
+      angle = 45,
+      hjust = 1
+    ),
+
+    axis.text.y = element_text(
+      size = 12
+    ),
+
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    )
+  )
+
+print(p)
+
+# ggsave(
+#   "3D_Distance_group_violin_with_brackets.pdf",
+#   p,
+#   width = 7,
+#   height = 5
+# )
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# =========================
+# Simple 3D distance violin plot
+# directly from MODEL_data_new
+# =========================
+
+# 1) Group order
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+
+# 2) Colors
+custom_colors <- c(
+  "C_H_M_H" = "#F28C9D",
+  "C_H_M_L" = "#F3E065",
+  "C_L_M_H" = "#65C9F3",
+  "C_L_M_L" = "#9EAAE0"
+)
+
+
+# 3) Prepare data
+df_combined <- MODEL_data_new %>%
+  select(
+    Group,
+    `3D_Distance`
+  ) %>%
+  filter(
+    !is.na(Group),
+    !is.na(`3D_Distance`)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    ),
+    Distance = `3D_Distance`
+  ) %>%
+  select(
+    Group,
+    Distance
+  )
+
+
+# 4) Calculate group mean
+group_mean <- df_combined %>%
+  group_by(Group) %>%
+  summarise(
+    mean_distance = mean(
+      Distance,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+print(group_mean)
+
+
+# 5) Position mean labels above distribution
+distance_range <- range(
+  df_combined$Distance,
+  na.rm = TRUE
+)
+
+step_val <- diff(
+  distance_range
+) * 0.05
+
+if (step_val == 0) {
+  step_val <- 0.1
+}
+
+y_max <- max(
+  df_combined$Distance,
+  na.rm = TRUE
+) + step_val
+
+
+# 6) Plot
+p <- ggplot(
+  df_combined,
+  aes(
+    x = Group,
+    y = Distance,
+    fill = Group
+  )
+) +
+
+  geom_violin(
+    trim = TRUE,
+    alpha = 0.6
+  ) +
+
+  geom_boxplot(
+    width = 0.1,
+    outlier.shape = NA,
+    color = "black"
+  ) +
+
+  geom_text(
+    data = group_mean,
+    aes(
+      x = Group,
+      y = y_max,
+      label = round(
+        mean_distance,
+        4
+      )
+    ),
+    inherit.aes = FALSE,
+    vjust = 0,
+    size = 5,
+    color = "black",
+    fontface = "bold"
+  ) +
+
+  scale_fill_manual(
+    values = custom_colors
+  ) +
+
+  labs(
+    title = "3D Distance Distribution Across Groups",
+    x = "Group",
+    y = "3D Distance"
+  ) +
+
+  theme_classic(
+    base_size = 14
+  ) +
+
+  theme(
+    legend.position = "none",
+
+    axis.text.x = element_text(
+      size = 12,
+      face = "bold",
+      angle = 45,
+      hjust = 1
+    ),
+
+    axis.text.y = element_text(
+      size = 12
+    ),
+
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    )
+  )
+
+print(p)
+```
+

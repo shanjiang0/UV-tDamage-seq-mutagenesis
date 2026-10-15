@@ -1,0 +1,750 @@
+---
+title: "CPD_TF_network"
+author: "Shan Jiang"
+date: "2024-11-19"
+output: html_document
+---
+##Target Damage-seq
+
+## CPD_COMBINED
+
+```{r CPD}
+
+library(dplyr)
+# Read BED file into a data frame
+CPD_gene_normalized <- read.table("CPD_Enrichment.bed", header = FALSE, sep = "\t")
+
+# Rename columns
+colnames(CPD_gene_normalized) <- c("chr", "start", "end", "name", "CPD_density", "Cluster_length", "CPD_Enrichment")
+
+
+
+```
+
+## Mutation_COMBINED_RPKM
+```{r}
+library(dplyr)
+# Read BED file into a data frame
+Mutation_normalized <- read.table("CPD_Cluster_Mutation_counts.bed", header = FALSE, sep = "\t")
+
+# Rename columns
+colnames(Mutation_normalized) <- c("chr", "start", "end", "name", "count")
+
+# Calculate gene length in kilobases
+Mutation_normalized <- Mutation_normalized %>%
+  mutate(gene_length = (end - start))
+
+# Calculate the total number of reads across the dataset
+total_reads_Mutation <- sum(Mutation_normalized$count)
+
+# Calculate RPKM for each cluster
+Mutation_normalized <- Mutation_normalized %>%
+  mutate(MELA_CPKM = (count * 1e6) / (gene_length/1e3 * total_reads_Mutation))
+
+#head(CPD_gene_normalized)
+
+# Assuming CPD_gene_normalized is already loaded
+# Sort based on chr, start, end, and name
+Mutation_normalized <-Mutation_normalized %>%
+  arrange(chr, start, end, name)
+```
+
+
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Merge the two data frames by chr, start, end, and name
+merged_plot_data_combined <- inner_join(
+  CPD_gene_normalized, 
+  Mutation_normalized, 
+  by = c("chr", "start", "end", "name")  # Specify the columns to merge on
+)
+
+
+# Create the scatter plot with linear regression line
+ggplot(merged_plot_data_combined, aes(x = CPD_Enrichment, y = MELA_CPKM)) +
+  geom_point(color = "#9EAAE0", size = 3, alpha = 0.7) +  
+  geom_smooth(method = "lm", se = FALSE, color = "#F3E065", size = 2) + 
+  labs(title = "CPD Correlation",
+       x = "CPD Enrichment",
+       y = "CPKM in MELA") +
+  # Uncomment the following lines to limit x or y axes if needed
+  #xlim(0, 410) +  
+  #ylim(0, 480) +  
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), 
+    axis.title.x = element_text(face = "bold", size = 14),  
+    axis.title.y = element_text(face = "bold", size = 14),  
+    axis.text = element_text(size = 12)  
+  )
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Merge the two data frames
+merged_plot_data_combined <- inner_join(
+  CPD_gene_normalized, 
+  Mutation_normalized, 
+  by = c("chr", "start", "end", "name")
+)
+
+# ---- Pearson correlation + p-value ----
+cor_result <- cor.test(merged_plot_data_combined$CPD_Enrichment,
+                       merged_plot_data_combined$MELA_CPKM,
+                       method = "pearson")
+
+r_val <- round(cor_result$estimate, 3)
+p_val <- signif(cor_result$p.value, 3)
+
+cor_label <- paste0("Pearson r = ", r_val, "\n", "p = ", p_val)
+
+# ---- Plot with annotation ----
+ 
+ggplot(merged_plot_data_combined, aes(x = CPD_Enrichment, y = MELA_CPKM)) +
+  geom_point(color = "#9EAAE0", size = 4, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "#F3E065", size = 2) +
+  annotate("text", x = Inf, y = Inf, label = cor_label,
+           hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
+  labs(title = "Cluster Correlation",
+       x = "CPD Enrichment (RPB)",
+       y = "MELA Mutation (CPKM)") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), 
+    axis.title.x = element_text(face = "bold", size = 14),  
+    axis.title.y = element_text(face = "bold", size = 14),  
+    axis.text = element_text(size = 12),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1.2)  # <-- add box
+  )
+
+
+```
+
+
+
+##
+##z-scale()
+```{r}
+library(dplyr)
+
+# Standardize the variables (z-score normalization)
+z_gene_diff <- merged_plot_data_combined %>%
+  mutate(
+    z_CPD = scale(CPD_Enrichment),                       # Z-score for CPD RPKM
+    z_MELA = scale(MELA_CPKM)                    # Z-score for mutation RPKGCM
+  )
+
+
+
+```
+
+
+
+```{r}
+library(ggplot2)
+
+# Create the scatter plot with centered axes
+ggplot(z_gene_diff, aes(x = z_CPD, y = z_MELA)) +
+  geom_point(color = "#9EAAE0", size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "#F3E065", size = 1.2) +
+  labs(
+    title = "Z-Score Correlation Between CPD (RPKM) and Mutation (RPKGCM)",
+    x = "Z-Score of CPD Erichment)",
+    y = "Z-Score of CPKM (Mutation)"
+  ) +
+  scale_x_continuous(limits = c(-5, 7), expand = c(0, 0.5)) +  # Adjust x-axis limits
+  scale_y_continuous(limits = c(-5, 7), expand = c(0, 0.5)) +  # Adjust y-axis limits
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.4, size = 13, face = "bold"),
+    axis.title.x = element_text(face = "bold", size = 14),
+    axis.title.y = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid.major = element_line(color = "gray90", size = 0.2)
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.8) +  # Add a horizontal line at y=0
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 0.8)    # Add a vertical line at x=0
+
+
+```
+
+
+```{r}
+thr <- 0.5  # size of the muted center square
+
+z_gene_diff <- z_gene_diff %>%
+  mutate(
+    quadrant = case_when(
+      z_CPD > 0 & z_MELA > 0 ~ "Mutation High, CPD High",       # top-right
+      z_CPD > 0 & z_MELA <  0 ~ "Mutation Low, CPD High",        # bottom-right
+      z_CPD <=  0 & z_MELA > 0 ~ "Mutation High, CPD Low",        # top-left
+      z_CPD <=  0 & z_MELA <=  0 ~ "Mutation Low, CPD Low"          # bottom-left
+    )
+  )
+
+ggplot(z_gene_diff, aes(x = z_CPD, y = z_MELA, color = quadrant)) +
+  annotate("rect", xmin = -thr, xmax = thr, ymin = -thr, ymax = thr,
+           fill = "grey85", alpha = 0.5, color = NA) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", size = 1.2) +
+  labs(
+    title = "Z-Score Correlation Between CPD Enrichment and Mutation (CPKM)",
+    x = "Z-Score of CPD Enrichment",
+    y = "Z-Score of CPKM (Mutation)"
+  ) +
+  scale_x_continuous(limits = c(-5, 5), expand = c(0, 0.5)) +
+  scale_y_continuous(limits = c(-5, 15), expand = c(0, 0.5)) +
+  scale_color_manual(values = c(
+    "Mutation High, CPD High" = "#F28C9D",
+    "Mutation Low, CPD High"  = "#F3E065",
+    "Mutation High, CPD Low"  = "#65C9F3",
+    "Mutation Low, CPD Low"   = "#9EAAE0"
+  )) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.6, size = 12, face = "bold"),
+    axis.title.x = element_text(face = "bold", size = 14),
+    axis.title.y = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid.major = element_line(color = "gray90", size = 0.2),
+    legend.position = "right"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 0.8)
+
+```
+
+
+
+
+
+
+```{r}
+thr <- 0.5  # threshold for the muted center square
+
+
+z_gene_diff <- z_gene_diff %>%
+  mutate(
+    quadrant = case_when(
+      z_CPD > 0 & z_MELA > 0 ~ "Mutation High, CPD High",       # top-right
+      z_CPD > 0 & z_MELA <  0 ~ "Mutation Low, CPD High",        # bottom-right
+      z_CPD <=  0 & z_MELA > 0 ~ "Mutation High, CPD Low",        # top-left
+      z_CPD <=  0 & z_MELA <=  0 ~ "Mutation Low, CPD Low"          # bottom-left
+    )
+  )
+
+z_gene_diff %>%
+  count(quadrant)
+
+ggplot(z_gene_diff, aes(x = z_CPD, y = z_MELA, color = quadrant)) +
+  # grey square in the center
+  annotate("rect", xmin = -thr, xmax = thr, ymin = -thr, ymax = thr,
+           fill = "grey85", alpha = 0.6, color = NA) +
+  geom_point(size = 3, alpha = 0.82) +
+  labs(
+    title = "Z-Score Correlation Between CPD and Mutation",
+    x = "CPD Enrichment (RPB)",
+    y = "Mutation Enrichment (CPKM)"
+  ) +
+  scale_x_continuous(
+    limits = c(-3, 6),
+    breaks = seq(-3, 6, 1),
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(
+    limits = c(-2, 12),
+    breaks = seq(-2, 12, 2),
+    expand = c(0, 0)
+  ) +
+  scale_color_manual(values = c(
+    "Mutation High, CPD High" = "#F58C9D",
+    "Mutation Low, CPD High"  = "#F3E065",
+    "Mutation High, CPD Low"  = "#65C9F3",
+    "Mutation Low, CPD Low"   = "#9EAAE0"
+  )) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title   = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.text    = element_text(size = 12),
+    legend.position = "right",
+    panel.border   = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid     = element_blank()
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 0.8)
+
+
+```
+
+
+
+
+
+```{r}
+# ========================
+# Donut plot for classification
+# ========================
+library(ggplot2)
+library(dplyr)
+
+# 1) Create data (replace with your actual table if needed)
+df <- tribble(
+  ~detailed_classification, ~count,
+  "Mutation High, CPD High", 212,
+  "Mutation High, CPD Low", 245,
+  "Mutation Low, CPD Low", 508,
+  "Mutation Low, CPD High", 397
+
+)
+
+# 2) Compute percentages and positions
+df <- df %>%
+  mutate(
+    fraction = count / sum(count),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, n = -1)),
+    label = paste0(detailed_classification, " (", count, ")")
+  )
+
+# 3) Define colors (adjust if needed)
+custom_colors <- c(
+  "Mutation High, CPD High" = "#F28C9D",
+  "Mutation Low, CPD High" = "#65C9F3",
+  "Mutation High, CPD Low" = "#F3E065",
+  "Mutation Low, CPD Low" = "#9EAAE0"
+)
+
+# 4) Plot
+p <- ggplot(df) +
+  geom_rect(aes(
+    ymin = ymin, ymax = ymax,
+    xmin = 2, xmax = 4,
+    fill = detailed_classification
+  ), color = "black") +
+  coord_polar(theta = "y") +
+  xlim(0, 4) +
+  scale_fill_manual(values = custom_colors) +
+  theme_void(base_size = 14) +
+  theme(
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  guides(fill = guide_legend(override.aes = list(size = 5))) +
+  labs(title = "Group")
+
+print(p)
+
+```
+
+
+
+
+
+
+```{r}
+library(dplyr)
+library(purrr)
+
+# Select columns to include in BED files
+selected_cols <- c("chr", "start", "end", "name", "CPD_Enrichment", "MELA_CPKM")
+
+output_dir <- "./"
+# Write each quadrant to its own BED file
+quadrants <- unique(z_gene_diff$quadrant)
+
+for (q in quadrants) {
+  # Filter by quadrant
+  subset_data <- z_gene_diff %>% filter(quadrant == q) %>% select(all_of(selected_cols))
+  
+  # Define output file name
+  output_file <- paste0(output_dir, "/", gsub(" ", "_", q), ".bed")
+  
+  # Write to file
+  write.table(subset_data, output_file, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+  
+  # Print confirmation message
+  cat("Saved:", output_file, "\n")
+}
+
+cat("All quadrant BED files have been created.\n")
+```
+
+
+
+
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)   # <-- needed for pivot_wider
+
+df_matrix <- z_gene_diff %>%
+  mutate(CPD_Enrichment = ifelse(is.na(CPD_Enrichment), 0, CPD_Enrichment)) %>%  # Replace NAs with 0 first
+  group_by(name, quadrant) %>%
+  summarise(mean_CPD = mean(CPD_Enrichment), .groups = "drop") %>%  # Now compute mean
+  pivot_wider(names_from = quadrant, values_from = mean_CPD) %>%
+  as.data.frame()
+
+# Replace NAs with 0 (or use the median)
+df_matrix[is.na(df_matrix)] <- 0  # Option 1: Replace NAs with 0
+# df_matrix[is.na(df_matrix)] <- apply(df_matrix, 1, median, na.rm = TRUE)  # Option 2: Replace NAs with median
+
+# Set row names to gene names
+rownames(df_matrix) <- df_matrix$name
+df_matrix$name <- NULL  # Remove the gene name column
+
+# Convert to matrix
+df_matrix <- as.matrix(df_matrix)
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Convert data from wide to long format for testing
+df_long <- df_matrix %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("Gene") %>%
+  pivot_longer(cols = -Gene, names_to = "Quadrant", values_to = "CPD_Enrichment")
+kruskal_result <- kruskal.test(CPD_Enrichment ~ Quadrant, data = df_long)
+print(kruskal_result)
+
+#Since the Kruskal-Wallis test is significant, we should run pairwise Wilcoxon tests to see which groups differ:
+pairwise.wilcox.test(df_long$CPD_Enrichment, df_long$Quadrant, p.adjust.method = "fdr")
+
+
+
+```
+
+
+##iNDENPENDENT TEST
+
+```{r}
+library(coin)
+
+# Convert Quadrant to a factor (important for coin package)
+df_long$Quadrant <- as.factor(df_long$Quadrant)
+
+# Perform the Asymptotic General Independence Test
+ind_test_result <- independence_test(CPD_Enrichment ~ Quadrant, data = df_long, teststat = "quad")
+#This test is similar to the Kruskal-Wallis test but is a generalized independence test.
+#Chi-squared = 126.03 and df = 3 indicate the test statistic.
+#p-value < 2.2e-16 confirms strong evidence of differences between groups.
+
+
+# Extract test statistics
+chi_sq_value <- round(statistic(ind_test_result)[1], 2)  # Chi-square value
+p_value <- format.pval(pvalue(ind_test_result))  # Format p-value
+
+# Raincloud plot with test results in top-right corner
+ggplot(df_long, aes(x = Quadrant, y = CPD_Enrichment, fill = Quadrant, color = Quadrant)) +
+  # Half-violin plot (density distribution)
+  ggdist::stat_halfeye(
+    adjust = 0.5,  # Smoothness
+    justification = -0.2,  # Shift to left
+    .width = 0,
+    point_colour = NA
+  ) +
+  # Boxplot (for median and IQR)
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 0.5, color = "black") +
+  # Jittered points (for individual gene values)
+  geom_jitter(width = 0.1, alpha = 0.7, size = 1) +
+  # Add Independence Test Result as a text annotation (top-right corner)
+  annotate("text", x = 5.5, y = max(df_long$CPD_Enrichment) * 0.9, 
+           label = paste("Independence Test:\nChi² =", chi_sq_value, 
+                         "\nP =", p_value),
+           size = 4, hjust = 1, fontface = "bold", color = "black") +
+  # Labels and theme
+  labs(title = "Raincloud Plot of RPKM Across Groups with Independence Test",
+       x = "",
+       y = "RPKM") +
+  theme_minimal() + 
+  scale_fill_manual(values = c("Mutation High, CPD High" = "#F28C9D", 
+                               "Mutation High, CPD Low" = "#65C9F3C9", 
+                               "Mutation Low, CPD High" = "#F3E065", 
+                               "Mutation Low, CPD Low" = "#9EAAE0")) +
+  scale_color_manual(values = c("Mutation High, CPD High" = "#F28C9D", 
+                                "Mutation High, CPD Low" = "#65C9F3C9", 
+                                "Mutation Low, CPD High" = "#F3E065", 
+                                "Mutation Low, CPD Low" = "#9EAAE0")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+```
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(gghalves)
+library(ggdist)
+library(ggpubr)  # For stat_compare_means
+library(dplyr)
+library(tidyr)
+
+# --- 1) Long format with desired order ---
+df_long <- df_matrix %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("Gene") %>%
+  pivot_longer(cols = -Gene, names_to = "Quadrant", values_to = "CPD_Enrichment") %>%
+  mutate(
+    Quadrant = factor(
+      Quadrant,
+      levels = c(
+        "Mutation High, CPD High",
+        "Mutation Low, CPD High",
+        "Mutation High, CPD Low",
+        "Mutation Low, CPD Low"
+      )
+    )
+  )
+
+
+# Define the pairwise comparisons
+comparisons <- list(
+  c("Mutation High, CPD High", "Mutation Low, CPD High"),
+  c("Mutation High, CPD High", "Mutation High, CPD Low"),
+  c("Mutation High, CPD High", "Mutation Low, CPD Low"),
+  c("Mutation Low, CPD High", "Mutation High, CPD Low"),
+  c("Mutation Low, CPD High", "Mutation Low, CPD Low"),
+  c("Mutation High, CPD Low", "Mutation Low, CPD Low")
+)
+
+# Create raincloud plot with boxplot on top
+ggplot(df_long, aes(x = Quadrant, y = CPD_Enrichment, fill = Quadrant, color = Quadrant)) +
+  
+  # Half-violin plot
+  ggdist::stat_halfeye(
+    adjust = 0.5,
+    justification = -0.2,
+    .width = 0,
+    point_colour = NA
+  ) +
+  
+  # Jittered points
+  geom_jitter(width = 0.1, alpha = 0.7, size = 1) +
+  
+  # 👉 Boxplot LAST: so it’s on top
+  geom_boxplot(
+    width = 0.2, 
+    outlier.shape = NA, 
+    alpha = 1,               # Fully opaque
+    color = "black",
+    linewidth = 0.8          # Thicker lines for clarity
+  ) +
+  
+  # Annotate chi-square result
+  annotate("text", x = 5.5, y = max(df_long$RPKM) * 0.9, 
+           label = paste("Independence Test:\nChi² =", chi_sq_value, 
+                         "\nP =", p_value),
+           size = 3, hjust = 1.1, vjust = -1.5, fontface = "bold", color = "black") +
+  
+  # Add pairwise comparison p-values
+  stat_compare_means(
+    comparisons = comparisons, 
+    method = "wilcox.test",
+    label = "p.signif",
+    p.adjust.method = "fdr"
+  ) +
+  
+  # Axes and scales
+  scale_y_continuous(limits = c(0, 8)) +
+  
+  labs(
+    title = "Gene-Level CPD Enrichment Across Mutation–CPD Groups",
+    x = "Mutation–CPD Group",
+    y = "CPD Enrichment (RPB)"
+  ) +
+  
+  scale_fill_manual(values = c(
+    "Mutation High, CPD High" = "#F28C9D",
+    "Mutation Low, CPD High"  = "#F3E065",
+    "Mutation High, CPD Low"  = "#65C9F3C9",
+    "Mutation Low, CPD Low"   = "#9EAAE0"
+  )) +
+  
+  scale_color_manual(values = c(
+    "Mutation High, CPD High" = "#F28C9D",
+    "Mutation Low, CPD High"  = "#F3E065",
+    "Mutation High, CPD Low"  = "#65C9F3C9",
+    "Mutation Low, CPD Low"   = "#9EAAE0"
+  )) +
+  
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title  = element_text(hjust = 0.5, face = "bold"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+  )
+
+```
+
+
+
+
+
+
+
+
+
+############################################################################
+##Uniuqe cluster in just one group
+```{r}
+library(dplyr)
+
+# Ensure z_gene_diff contains 'chr', 'start', and 'end' columns
+exclusive_clusters <- z_gene_diff %>%
+  group_by(name) %>%
+  summarise(
+    chr = first(chr),  # Take the first occurrence of chromosome
+    start = first(start),  # Take the first occurrence of start position
+    end = first(end),  # Take the first occurrence of end position
+    unique_groups = n_distinct(quadrant),  # Count how many unique quadrants each gene appears in
+    assigned_group = first(quadrant)  # Keep the first assigned group
+  ) %>%
+  filter(unique_groups == 1)  # Keep only genes that appear in a single quadrant
+
+# Extract exclusive clusters for each group
+exclusive_M_H_C_H <- exclusive_clusters %>% filter(assigned_group == "Mutation High, CPD High")
+exclusive_M_H_C_L <- exclusive_clusters %>% filter(assigned_group == "Mutation High, CPD Low")
+exclusive_M_L_C_H <- exclusive_clusters %>% filter(assigned_group == "Mutation Low, CPD High")
+exclusive_M_L_C_L <- exclusive_clusters %>% filter(assigned_group == "Mutation Low, CPD Low")
+
+# Print results
+print(exclusive_M_H_C_H)  # Clusters unique to Mutation High, CPD High
+print(exclusive_M_H_C_L)  # Clusters unique to Mutation High, CPD Low
+print(exclusive_M_L_C_H)  # Clusters unique to Mutation Low, CPD High
+print(exclusive_M_L_C_L)  # Clusters unique to Mutation Low, CPD Low
+
+
+```
+
+###################################################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Filter the data into four groups based on `detailed_classification`
+mutation_high_cpd_high <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation High, CPD High")
+
+mutation_low_cpd_high <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation Low, CPD High")
+
+mutation_high_cpd_low <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation High, CPD Low")
+
+mutation_low_cpd_low <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation Low, CPD Low")
+
+# Print the number of rows in each dataset
+cat("Mutation High, CPD High:", nrow(mutation_high_cpd_high), "rows\n")
+cat("Mutation Low, CPD High:", nrow(mutation_low_cpd_high), "rows\n")
+cat("Mutation High, CPD Low:", nrow(mutation_high_cpd_low), "rows\n")
+cat("Mutation Low, CPD Low:", nrow(mutation_low_cpd_low), "rows\n")
+
+
+# Save these filtered datasets to CSV files
+write.csv(mutation_high_cpd_high, "mutation_high_cpd_high.csv", row.names = FALSE)
+write.csv(mutation_low_cpd_high, "mutation_low_cpd_high.csv", row.names = FALSE)
+write.csv(mutation_high_cpd_low, "mutation_high_cpd_low.csv", row.names = FALSE)
+write.csv(mutation_low_cpd_low, "mutation_low_cpd_low.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+# Load dplyr to ensure you have the right `select` function
+library(dplyr)
+
+# Filter the data into four groups and extract the required columns for BED format
+mutation_high_cpd_high <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation High, CPD High") %>%
+  dplyr::select(chr, start, end, name, detailed_classification)  # Use dplyr::select to avoid conflicts
+
+mutation_low_cpd_high <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation Low, CPD High") %>%
+  dplyr::select(chr, start, end, name, detailed_classification)
+
+mutation_high_cpd_low <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation High, CPD Low") %>%
+  dplyr::select(chr, start, end, name, detailed_classification)
+
+mutation_low_cpd_low <- z_gene_diff %>%
+  filter(detailed_classification == "Mutation Low, CPD Low") %>%
+  dplyr::select(chr, start, end, name, detailed_classification)
+
+# Save as BED files
+write.table(mutation_high_cpd_high, "mutation_high_cpd_high.bed", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(mutation_low_cpd_high, "mutation_low_cpd_high.bed", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(mutation_high_cpd_low, "mutation_high_cpd_low.bed", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(mutation_low_cpd_low, "mutation_low_cpd_low.bed", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+```
+

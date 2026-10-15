@@ -1,0 +1,73 @@
+---
+title: "127gene_cor"
+author: "Shan Jiang"
+date: "2025-08-26"
+output: html_document
+---
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(readr)
+
+# Load data
+cpd_data <- read_tsv("127genes_CPD_raw_sum.bed", col_names = c("Chr", "Start", "End", "Gene", "X1", "strand", "CPD"))
+mutation_data <- read_tsv("127genes_Mutation_counts.bed", col_names = c("Chr", "Start", "End", "Gene", "X1", "Strand", "Mutation"))
+merged_data <- inner_join(cpd_data, mutation_data, by = "Gene")
+
+# Replace 0 with 0.1 for log safety
+merged_data <- merged_data %>%
+  mutate(CPD = ifelse(CPD == 0, 0.1, CPD),
+         Mutation = ifelse(Mutation == 0, 0.1, Mutation))
+
+# Label top and bottom genes
+top_genes <- merged_data %>% arrange(desc(Mutation)) %>% head(2)
+low_cpd_genes <- merged_data %>% arrange(CPD) %>% head(2)
+
+# Correlation test
+cor_test <- cor.test(log10(merged_data$CPD), log10(merged_data$Mutation), method = "pearson")
+r_text <- paste0("R = ", signif(cor_test$estimate, 3))
+pval_text <- paste0("p-value = ", signif(cor_test$p.value, 3))
+
+ggplot(merged_data, aes(x = CPD, y = Mutation)) +
+  geom_point(color = "#7678ed", size = 3.5, alpha = 0.6) +
+  geom_text(data = top_genes, aes(label = Gene), vjust = 0.5, hjust=-0.15, size = 3, color = "black") +
+  geom_text(data = low_cpd_genes, aes(label = Gene), vjust = 0.5, hjust=-0.15, size = 3, color = "black") +
+  geom_smooth(method = "lm", se = TRUE, color = "black", size = 0.5) +
+  annotate("text", x = max(merged_data$CPD) * 0.6, 
+           y = min(merged_data$Mutation) * 2, 
+           label = r_text, hjust = 1.53, size = 4) +
+  annotate("text", x = max(merged_data$CPD) * 0.6, 
+           y = min(merged_data$Mutation), 
+           label = pval_text, hjust = 0.8, size = 4) +
+  scale_x_log10(
+    breaks = c(0.1, 1, 10, 100, 1000, 10000, 50000),
+    labels = c("0", "1", "10", "100", "1k", "10k", "50k")
+  ) +
+  scale_y_log10(
+    breaks = c(0.1, 1, 10, 100, 1000, 10000, 50000),
+    labels = c("0", "1", "10", "100", "1k", "10k", "50k")
+  ) +
+  labs(
+    title = "CPD vs Mutation Log(Count)",
+    x = "CPD norm reads",
+    y = "Mutation count"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text = element_text(color = "black")
+  )
+
+
+```
+
+
+
+
+
+
+
+

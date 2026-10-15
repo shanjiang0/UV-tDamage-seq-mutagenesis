@@ -1,0 +1,3543 @@
+---
+title: "XGBoost_2model"
+author: "Shan Jiang"
+date: "2026-10-08"
+output: html_document
+---
+
+
+```{r}
+library(readr)
+library(dplyr)
+
+# ============================================================
+# NEW MODEL INPUT
+# ============================================================
+
+MODEL_data_new <- read_tsv(
+  "ALL_Combined_10082026.tsv",
+  col_names = TRUE
+)
+
+
+# ============================================================
+# FEATURES USED FOR MODELING
+# ============================================================
+
+model_features <- c(
+  "XR_12m",
+  "XR_1h",
+  "XR_4h",
+  "XR_8h",
+  "XR_16h",
+  "XR_24h",
+  "XR_48h",
+
+  "DNase",
+  "H3K27ac",
+  "H3K4me1",
+  "H3K4me3",
+  "H3K27me3",
+  "H3K9me3",
+  "CTCF",
+
+  "RNA_RPKM",
+
+  "3D_Distance"
+)
+
+
+# ============================================================
+# FINAL MODEL DATA
+# ============================================================
+
+MODEL_data <- MODEL_data_new %>%
+  select(
+    all_of(model_features),
+    Group
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = c(
+        "C_H_M_H",
+        "C_H_M_L",
+        "C_L_M_H",
+        "C_L_M_L"
+      )
+    )
+  )
+
+
+# ============================================================
+# CHECK
+# ============================================================
+
+dim(MODEL_data)
+
+names(MODEL_data)
+
+table(MODEL_data$Group)
+
+head(MODEL_data)
+```
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(xgboost)
+library(caret)
+library(pROC)
+library(ggplot2)
+
+set.seed(33)
+
+
+# ======================================================
+# 1. Prepare modeling data
+# ======================================================
+
+stopifnot(
+  "Group" %in% names(MODEL_data)
+)
+
+
+MODEL_data$Group <- factor(
+  MODEL_data$Group,
+  levels = c(
+    "C_H_M_H",
+    "C_H_M_L",
+    "C_L_M_H",
+    "C_L_M_L"
+  )
+)
+
+
+# ======================================================
+# 2. Keep numeric model features only
+# ======================================================
+
+DF_CLEAN <- MODEL_data %>%
+  select(
+    where(is.numeric),
+    Group
+  )
+
+
+# Remove rows with missing model values
+DF_CLEAN <- DF_CLEAN %>%
+  filter(
+    complete.cases(.)
+  )
+
+
+cat("\nFeatures used for modeling:\n")
+
+print(
+  setdiff(
+    names(DF_CLEAN),
+    "Group"
+  )
+)
+
+
+# ======================================================
+# 3. Build High-CPD dataset
+#
+# C_H_M_H = CPD High / Mutation High
+# C_H_M_L = CPD High / Mutation Low
+# ======================================================
+
+high_cpd_df <- DF_CLEAN %>%
+  filter(
+    Group %in% c(
+      "C_H_M_H",
+      "C_H_M_L"
+    )
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = c(
+        "C_H_M_H",
+        "C_H_M_L"
+      )
+    )
+  )
+
+
+# ======================================================
+# 4. Build Low-CPD dataset
+#
+# C_L_M_H = CPD Low / Mutation High
+# C_L_M_L = CPD Low / Mutation Low
+# ======================================================
+
+low_cpd_df <- DF_CLEAN %>%
+  filter(
+    Group %in% c(
+      "C_L_M_H",
+      "C_L_M_L"
+    )
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = c(
+        "C_L_M_H",
+        "C_L_M_L"
+      )
+    )
+  )
+
+
+# ======================================================
+# CHECK
+# ======================================================
+
+cat("\nHigh-CPD counts:\n")
+print(
+  table(
+    high_cpd_df$Group
+  )
+)
+
+
+cat("\nLow-CPD counts:\n")
+print(
+  table(
+    low_cpd_df$Group
+  )
+)
+```
+
+#XGBOOST training
+```{r}
+# ======================================================
+# XGBOOST FUNCTION
+# Fixed seed + fixed folds
+# ======================================================
+
+fit_xgb_subset <- function(
+  df,
+  nrounds = 300,
+  eta = 0.05,
+  max_depth = 6,
+  seed = 33
+) {
+
+  stopifnot(
+    "Group" %in% names(df)
+  )
+
+
+  set.seed(seed)
+
+
+  # ====================================================
+  # Positive class = first factor level
+  #
+  # High CPD:
+  # 1 = C_H_M_H
+  # 0 = C_H_M_L
+  #
+  # Low CPD:
+  # 1 = C_L_M_H
+  # 0 = C_L_M_L
+  # ====================================================
+
+  y <- as.integer(
+    df$Group ==
+      levels(df$Group)[1]
+  )
+
+
+  X <- df %>%
+    select(
+      -Group
+    )
+
+
+  # ====================================================
+  # Remove constant predictors
+  # ====================================================
+
+  keep <- sapply(
+    X,
+    function(z) {
+
+      length(
+        unique(
+          z[
+            !is.na(z)
+          ]
+        )
+      ) > 1
+
+    }
+  )
+
+
+  X <- X[
+    ,
+    keep,
+    drop = FALSE
+  ]
+
+
+  if (
+    ncol(X) == 0
+  ) {
+
+    stop(
+      "No usable predictors remain after removing constant columns."
+    )
+  }
+
+
+  # ====================================================
+  # XGBoost matrix
+  # ====================================================
+
+  dtrain <- xgb.DMatrix(
+    data = as.matrix(X),
+    label = y
+  )
+
+
+  # ====================================================
+  # Parameters
+  # ====================================================
+
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "auc",
+    eta = eta,
+    max_depth = max_depth,
+    subsample = 0.8,
+    colsample_bytree = 0.8,
+    nthread = 1
+  )
+
+
+  # ====================================================
+  # Fixed 5-fold split
+  # ====================================================
+
+  set.seed(seed)
+
+
+  folds <- caret::createFolds(
+    factor(y),
+    k = 5,
+    list = TRUE,
+    returnTrain = FALSE
+  )
+
+
+  # ====================================================
+  # Cross-validation
+  # ====================================================
+
+  cv <- xgb.cv(
+    params = params,
+    data = dtrain,
+    folds = folds,
+    nrounds = nrounds,
+    verbose = 0,
+    early_stopping_rounds = 20,
+    maximize = TRUE
+  )
+
+
+  best_round <- cv$best_iteration
+
+
+  if (
+    is.null(best_round) ||
+    length(best_round) == 0 ||
+    is.na(best_round)
+  ) {
+
+    best_round <- nrounds
+
+    message(
+      "best_iteration not returned; using nrounds = ",
+      best_round
+    )
+  }
+
+
+  # ====================================================
+  # Train final model
+  # ====================================================
+
+  xgb_fit <- xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = best_round,
+    verbose = 0
+  )
+
+
+  # ====================================================
+  # Prediction
+  # ====================================================
+
+  preds <- predict(
+    xgb_fit,
+    as.matrix(X)
+  )
+
+
+  pred_label <- ifelse(
+    preds > 0.5,
+    1,
+    0
+  )
+
+
+  # ====================================================
+  # Confusion matrix
+  # ====================================================
+
+  cm <- caret::confusionMatrix(
+    factor(
+      pred_label,
+      levels = c(
+        0,
+        1
+      )
+    ),
+    factor(
+      y,
+      levels = c(
+        0,
+        1
+      )
+    ),
+    positive = "1"
+  )
+
+
+  # ====================================================
+  # AUC
+  # ====================================================
+
+  auc_val <- as.numeric(
+    pROC::auc(
+      response = y,
+      predictor = preds
+    )
+  )
+
+
+  # ====================================================
+  # Return
+  # ====================================================
+
+  list(
+    model = xgb_fit,
+    preds = preds,
+    truth = y,
+    cm = cm,
+    auc = auc_val,
+    best_round = best_round,
+    importance = xgb.importance(
+      model = xgb_fit
+    ),
+    kept_features = colnames(X),
+    folds = folds,
+    cv = cv
+  )
+}
+
+
+# ======================================================
+# TRAIN HIGH-CPD MODEL
+# ======================================================
+
+cat(
+  "Training High-CPD model...\n"
+)
+
+fit_high_xgb <- fit_xgb_subset(
+  high_cpd_df,
+  seed = 33
+)
+
+
+# ======================================================
+# TRAIN LOW-CPD MODEL
+# ======================================================
+
+cat(
+  "Training Low-CPD model...\n"
+)
+
+fit_low_xgb <- fit_xgb_subset(
+  low_cpd_df,
+  seed = 33
+)
+```
+
+
+
+#XGBoost model results
+```{r}
+# ======================================================
+# SHOW MODEL RESULTS
+# ======================================================
+
+cat(
+  "\n[High-CPD]\n"
+)
+
+print(
+  fit_high_xgb$cm$table
+)
+
+cat(
+  sprintf(
+    "Accuracy = %.3f | AUC = %.3f | Best rounds = %d\n",
+    fit_high_xgb$cm$overall["Accuracy"],
+    fit_high_xgb$auc,
+    fit_high_xgb$best_round
+  )
+)
+
+
+cat(
+  "\n[Low-CPD]\n"
+)
+
+print(
+  fit_low_xgb$cm$table
+)
+
+cat(
+  sprintf(
+    "Accuracy = %.3f | AUC = %.3f | Best rounds = %d\n",
+    fit_low_xgb$cm$overall["Accuracy"],
+    fit_low_xgb$auc,
+    fit_low_xgb$best_round
+  )
+)
+```
+```{r}
+# ======================================================
+# EVALUATION SUMMARY WITH AUPRC
+# ======================================================
+
+library(PRROC)
+
+evaluate_xgb_metrics <- function(
+  fit_obj,
+  model_name = "Model"
+) {
+
+  truth <- fit_obj$truth
+  preds <- fit_obj$preds
+
+
+  # ====================================================
+  # Predicted class
+  # ====================================================
+
+  pred_label <- ifelse(
+    preds > 0.5,
+    1,
+    0
+  )
+
+
+  # ====================================================
+  # Confusion matrix
+  # ====================================================
+
+  cm <- caret::confusionMatrix(
+    factor(
+      pred_label,
+      levels = c(
+        0,
+        1
+      )
+    ),
+    factor(
+      truth,
+      levels = c(
+        0,
+        1
+      )
+    ),
+    positive = "1"
+  )
+
+
+  # ====================================================
+  # Accuracy
+  # ====================================================
+
+  accuracy <- as.numeric(
+    cm$overall[
+      "Accuracy"
+    ]
+  )
+
+
+  # ====================================================
+  # Precision
+  # ====================================================
+
+  precision <- as.numeric(
+    cm$byClass[
+      "Pos Pred Value"
+    ]
+  )
+
+
+  # ====================================================
+  # Recall
+  # ====================================================
+
+  recall <- as.numeric(
+    cm$byClass[
+      "Sensitivity"
+    ]
+  )
+
+
+  # ====================================================
+  # F1
+  # ====================================================
+
+  f1 <- ifelse(
+    (
+      precision +
+        recall
+    ) > 0,
+
+    2 *
+      precision *
+      recall /
+      (
+        precision +
+          recall
+      ),
+
+    NA_real_
+  )
+
+
+  # ====================================================
+  # AUROC
+  # ====================================================
+
+  auc_val <- as.numeric(
+    pROC::auc(
+      response = truth,
+      predictor = preds
+    )
+  )
+
+
+  # ====================================================
+  # AUPRC
+  #
+  # Positive class = truth == 1
+  # Negative class = truth == 0
+  # ====================================================
+
+  pr_obj <- PRROC::pr.curve(
+    scores.class0 = preds[
+      truth == 1
+    ],
+    scores.class1 = preds[
+      truth == 0
+    ],
+    curve = FALSE
+  )
+
+
+  auprc_val <- as.numeric(
+    pr_obj$auc.integral
+  )
+
+
+  # ====================================================
+  # Output
+  # ====================================================
+
+  data.frame(
+    Model = model_name,
+    Accuracy = accuracy,
+    Precision = precision,
+    Recall = recall,
+    F1 = f1,
+    AUROC = auc_val,
+    AUPRC = auprc_val,
+    Best_Rounds = fit_obj$best_round
+  )
+}
+
+
+# ======================================================
+# HIGH-CPD
+# ======================================================
+
+metrics_high <- evaluate_xgb_metrics(
+  fit_high_xgb,
+  "High-CPD"
+)
+
+
+# ======================================================
+# LOW-CPD
+# ======================================================
+
+metrics_low <- evaluate_xgb_metrics(
+  fit_low_xgb,
+  "Low-CPD"
+)
+
+
+# ======================================================
+# COMBINE
+# ======================================================
+
+metrics_all <- bind_rows(
+  metrics_high,
+  metrics_low
+)
+
+
+cat(
+  "\n[Evaluation Summary]\n"
+)
+
+print(
+  metrics_all
+)
+
+
+# ======================================================
+# SAVE
+# ======================================================
+
+write_tsv(
+  metrics_all,
+  "XGBoost_Evaluation_Summary.tsv"
+)
+```
+
+#ROC
+```{r}
+# ======================================================
+# ROC CURVES + AUROC
+# ======================================================
+
+library(pROC)
+
+# ======================================================
+# 1. Build ROC objects
+# ======================================================
+
+roc_high <- roc(
+  response = fit_high_xgb$truth,
+  predictor = fit_high_xgb$preds,
+  quiet = TRUE
+)
+
+roc_low <- roc(
+  response = fit_low_xgb$truth,
+  predictor = fit_low_xgb$preds,
+  quiet = TRUE
+)
+
+
+# ======================================================
+# 2. AUROC values
+# ======================================================
+
+auroc_high <- as.numeric(
+  auc(roc_high)
+)
+
+auroc_low <- as.numeric(
+  auc(roc_low)
+)
+
+
+cat(
+  sprintf(
+    "High-CPD AUROC = %.4f\n",
+    auroc_high
+  )
+)
+
+cat(
+  sprintf(
+    "Low-CPD AUROC = %.4f\n",
+    auroc_low
+  )
+)
+
+
+# ======================================================
+# 3. Plot ROC curves
+# ======================================================
+
+plot(
+  roc_high,
+  col = "#ffd60a",
+  lwd = 2,
+  legacy.axes = TRUE,
+  main = "ROC Curves"
+)
+
+
+plot(
+  roc_low,
+  col = "#7678ed",
+  lwd = 2,
+  add = TRUE,
+  legacy.axes = TRUE
+)
+
+
+abline(
+  a = 0,
+  b = 1,
+  lty = 2,
+  col = "gray40"
+)
+
+
+legend(
+  "bottomright",
+  legend = c(
+    sprintf(
+      "High-CPD (AUROC = %.3f)",
+      auroc_high
+    ),
+    sprintf(
+      "Low-CPD (AUROC = %.3f)",
+      auroc_low
+    )
+  ),
+  col = c(
+    "#ffd60a",
+    "#7678ed"
+  ),
+  lwd = 2,
+  bty = "n"
+)
+
+# ======================================================
+# PRECISION-RECALL CURVES + AUPRC
+# ======================================================
+
+library(PRROC)
+library(dplyr)
+library(ggplot2)
+
+
+# ======================================================
+# 1. HIGH-CPD PR curve
+#
+# Positive class = 1 = C_H_M_H
+# Negative class = 0 = C_H_M_L
+# ======================================================
+
+pr_high <- pr.curve(
+  scores.class0 = fit_high_xgb$preds[
+    fit_high_xgb$truth == 1
+  ],
+  scores.class1 = fit_high_xgb$preds[
+    fit_high_xgb$truth == 0
+  ],
+  curve = TRUE
+)
+
+
+auprc_high <- pr_high$auc.integral
+
+
+# ======================================================
+# 2. LOW-CPD PR curve
+#
+# Positive class = 1 = C_L_M_H
+# Negative class = 0 = C_L_M_L
+# ======================================================
+
+pr_low <- pr.curve(
+  scores.class0 = fit_low_xgb$preds[
+    fit_low_xgb$truth == 1
+  ],
+  scores.class1 = fit_low_xgb$preds[
+    fit_low_xgb$truth == 0
+  ],
+  curve = TRUE
+)
+
+
+auprc_low <- pr_low$auc.integral
+
+
+# ======================================================
+# 3. Print AUPRC
+# ======================================================
+
+cat(
+  sprintf(
+    "High-CPD AUPRC = %.4f\n",
+    auprc_high
+  )
+)
+
+cat(
+  sprintf(
+    "Low-CPD AUPRC = %.4f\n",
+    auprc_low
+  )
+)
+
+# ======================================================
+# 4. Build PR curve dataframe
+# ======================================================
+
+pr_high_df <- data.frame(
+  Recall = pr_high$curve[, 1],
+  Precision = pr_high$curve[, 2],
+  Model = "High-CPD"
+)
+
+
+pr_low_df <- data.frame(
+  Recall = pr_low$curve[, 1],
+  Precision = pr_low$curve[, 2],
+  Model = "Low-CPD"
+)
+
+
+pr_df <- bind_rows(
+  pr_high_df,
+  pr_low_df
+)
+
+# ======================================================
+# 5. Plot Precision-Recall curves
+# ======================================================
+
+p_pr <- ggplot(
+  pr_df,
+  aes(
+    x = Recall,
+    y = Precision,
+    color = Model
+  )
+) +
+
+  geom_line(
+    linewidth = 1.2
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "High-CPD" = "#ffd60a",
+      "Low-CPD" = "#7678ed"
+    ),
+
+    labels = c(
+      sprintf(
+        "High-CPD (AUPRC = %.3f)",
+        auprc_high
+      ),
+
+      sprintf(
+        "Low-CPD (AUPRC = %.3f)",
+        auprc_low
+      )
+    )
+  ) +
+
+  scale_x_continuous(
+    limits = c(
+      0,
+      1
+    ),
+    breaks = seq(
+      0,
+      1,
+      0.1
+    )
+  ) +
+
+  scale_y_continuous(
+    limits = c(
+      0,
+      1
+    ),
+    breaks = seq(
+      0,
+      1,
+      0.1
+    )
+  ) +
+
+  coord_equal() +
+
+  labs(
+    title = "Precision-Recall Curves",
+    x = "Recall",
+    y = "Precision",
+    color = NULL
+  ) +
+
+  theme_classic(
+    base_size = 14
+  ) +
+
+  theme(
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 0.8
+    ),
+
+    legend.position = "bottom"
+  )
+
+
+print(
+  p_pr
+)
+
+# ======================================================
+# ROC CURVE DATAFRAME
+# ======================================================
+
+roc_high_df <- data.frame(
+  FPR = 1 - roc_high$specificities,
+  TPR = roc_high$sensitivities,
+  Model = "High-CPD"
+)
+
+
+roc_low_df <- data.frame(
+  FPR = 1 - roc_low$specificities,
+  TPR = roc_low$sensitivities,
+  Model = "Low-CPD"
+)
+
+
+roc_df <- bind_rows(
+  roc_high_df,
+  roc_low_df
+)
+```
+
+
+
+
+
+
+```{r}
+# ======================================================
+# FEATURE IMPORTANCE
+# ======================================================
+
+plot_xgb_importance <- function(
+  imp_df,
+  title,
+  top_n = 25,
+  fill_col = "#4361ee"
+) {
+
+  top_df <- imp_df %>%
+    slice_max(
+      order_by = Gain,
+      n = top_n
+    )
+
+
+  ggplot(
+    top_df,
+    aes(
+      x = reorder(
+        Feature,
+        Gain
+      ),
+      y = Gain
+    )
+  ) +
+
+    geom_col(
+      fill = fill_col
+    ) +
+
+    coord_flip() +
+
+    labs(
+      title = title,
+      x = "Feature",
+      y = "Gain (importance)"
+    ) +
+
+    theme_classic(
+      base_size = 12
+    ) +
+
+    theme(
+      axis.text.y = element_text(
+        size = 10,
+        color = "black"
+      ),
+
+      axis.text.x = element_text(
+        color = "black"
+      ),
+
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold"
+      )
+    )
+}
+
+
+# ======================================================
+# HIGH CPD
+# ======================================================
+
+imp_high_plot <- plot_xgb_importance(
+  fit_high_xgb$importance,
+  "XGBoost Feature Importance - High-CPD",
+  fill_col = "#ffd60a"
+)
+
+
+# ======================================================
+# LOW CPD
+# ======================================================
+
+imp_low_plot <- plot_xgb_importance(
+  fit_low_xgb$importance,
+  "XGBoost Feature Importance - Low-CPD",
+  fill_col = "#7678ed"
+)
+
+
+print(
+  imp_high_plot
+)
+
+print(
+  imp_low_plot
+)
+
+
+# ======================================================
+# SAVE TABLES
+# ======================================================
+
+write_tsv(
+  fit_high_xgb$importance,
+  "XGBoost_Importance_HighCPD.tsv"
+)
+
+
+write_tsv(
+  fit_low_xgb$importance,
+  "XGBoost_Importance_LowCPD.tsv"
+)
+
+
+# ggsave(
+#   "XGBoost_Importance_HighCPD.pdf",
+#   imp_high_plot,
+#   width = 6,
+#   height = 5
+# )
+#
+# ggsave(
+#   "XGBoost_Importance_LowCPD.pdf",
+#   imp_low_plot,
+#   width = 6,
+#   height = 5
+# )
+```
+
+```{r}
+# ======================================================
+# SHAP PREPARATION
+# ======================================================
+
+library(tidyr)
+library(patchwork)
+library(pheatmap)
+library(tibble)
+library(scales)
+library(grid)
+
+
+xgb_shap_long <- function(
+  fit_obj,
+  df,
+  target = "Group",
+  top_n = 25
+) {
+
+  X_all <- df %>%
+    select(
+      -all_of(target)
+    )
+
+
+  grp <- df[[target]]
+
+
+  # ====================================================
+  # Use exactly the features used to train the model
+  # ====================================================
+
+  X <- X_all[
+    ,
+    fit_obj$kept_features,
+    drop = FALSE
+  ]
+
+
+  mat <- as.matrix(X)
+
+
+  # ====================================================
+  # SHAP
+  # ====================================================
+
+  shap_mat <- predict(
+    fit_obj$model,
+    mat,
+    predcontrib = TRUE
+  )
+
+
+  shap_df <- as.data.frame(
+    shap_mat
+  )
+
+
+  if (
+    "BIAS" %in% names(shap_df)
+  ) {
+
+    shap_df$BIAS <- NULL
+  }
+
+
+  # ====================================================
+  # Rank by mean absolute SHAP
+  # ====================================================
+
+  mean_abs <- colMeans(
+    abs(shap_df),
+    na.rm = TRUE
+  )
+
+
+  valid_feats <- intersect(
+    names(mean_abs),
+    colnames(X)
+  )
+
+
+  keep_feats <- head(
+    valid_feats[
+      order(
+        mean_abs[
+          valid_feats
+        ],
+        decreasing = TRUE
+      )
+    ],
+    top_n
+  )
+
+
+  # ====================================================
+  # Sample IDs
+  # ====================================================
+
+  sample_ids <- paste0(
+    "S",
+    seq_len(
+      nrow(X)
+    )
+  )
+
+
+  # ====================================================
+  # Raw feature table
+  # ====================================================
+
+  raw_df <- as.data.frame(X)
+
+  raw_df$Sample <- sample_ids
+
+
+  # ====================================================
+  # Feature Z-scores
+  # ====================================================
+
+  Z <- as.data.frame(
+    scale(X)
+  )
+
+  Z$Sample <- sample_ids
+
+
+  # ====================================================
+  # SHAP long
+  # ====================================================
+
+  shap_df$Sample <- sample_ids
+
+
+  long_shap <- shap_df %>%
+
+    select(
+      all_of(keep_feats),
+      Sample
+    ) %>%
+
+    pivot_longer(
+      cols = -Sample,
+      names_to = "Feature",
+      values_to = "SHAP"
+    ) %>%
+
+    left_join(
+
+      Z %>%
+        pivot_longer(
+          cols = -Sample,
+          names_to = "Feature",
+          values_to = "Zscore"
+        ),
+
+      by = c(
+        "Sample",
+        "Feature"
+      )
+    ) %>%
+
+    left_join(
+      tibble(
+        Sample = sample_ids,
+        Group = as.character(grp)
+      ),
+      by = "Sample"
+    )
+
+
+  list(
+    long = long_shap,
+    order = keep_feats
+  )
+}
+
+# ======================================================
+# SHAP VIOLIN / SCATTER
+# ======================================================
+
+plot_shap_violin_raw <- function(
+  long_df,
+  class_label,
+  feat_order,
+  title,
+  point_alpha = 0.6,
+  point_size = 1.6,
+  xlim_override = NULL,
+  xbreaks_override = NULL
+) {
+
+  dfc <- long_df %>%
+    filter(
+      Group == class_label
+    )
+
+
+  present_features <- feat_order[
+    feat_order %in%
+      unique(dfc$Feature)
+  ]
+
+
+  dfc$Feature <- factor(
+    dfc$Feature,
+    levels = rev(
+      present_features
+    )
+  )
+
+
+  if (
+    is.null(
+      xlim_override
+    )
+  ) {
+
+    q <- quantile(
+      abs(
+        dfc$SHAP
+      ),
+      0.98,
+      na.rm = TRUE
+    )
+
+
+    lim <- max(
+      q,
+      1e-6
+    )
+
+
+    xlim_use <- c(
+      -lim,
+      lim
+    )
+
+  } else {
+
+    xlim_use <- xlim_override
+  }
+
+
+  ggplot(
+    dfc,
+    aes(
+      x = SHAP,
+      y = Feature,
+      color = Zscore
+    )
+  ) +
+
+    geom_violin(
+      scale = "width",
+      width = 0.18,
+      alpha = 0
+    ) +
+
+    geom_jitter(
+      size = point_size,
+      alpha = point_alpha
+    ) +
+
+    scale_color_gradientn(
+      colors = c(
+        "#480ca8",
+        "#fff9c5",
+        "#ffbe0b"
+      ),
+      values = scales::rescale(
+        c(
+          -0.5,
+          0,
+          0.5
+        )
+      ),
+      limits = c(
+        -0.5,
+        0.5
+      ),
+      oob = scales::squish
+    ) +
+
+    scale_x_continuous(
+      limits = xlim_use,
+      breaks = xbreaks_override
+    ) +
+
+    labs(
+      title = title,
+      x = "SHAP value",
+      y = "",
+      color = "Z-score"
+    ) +
+
+    theme_classic(
+      base_size = 12
+    ) +
+
+    theme(
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        linewidth = 0.8
+      ),
+
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold"
+      )
+    ) +
+
+    geom_vline(
+      xintercept = 0,
+      linetype = "dashed",
+      color = "grey40"
+    )
+}
+
+
+# ======================================================
+# FEATURE Z-SCORE HEATMAP
+# ======================================================
+
+plot_feature_raw_heatmap <- function(
+  long_df,
+  feat_order,
+  title,
+  desired_x_order = NULL,
+  color_min = -0.5,
+  color_max = 0.5
+) {
+
+  mean_by_class <- long_df %>%
+
+    group_by(
+      Group,
+      Feature
+    ) %>%
+
+    summarise(
+      m = mean(
+        Zscore,
+        na.rm = TRUE
+      ),
+      .groups = "drop"
+    ) %>%
+
+    pivot_wider(
+      names_from = Group,
+      values_from = m
+    )
+
+
+  mat <- mean_by_class %>%
+
+    filter(
+      Feature %in%
+        feat_order
+    ) %>%
+
+    column_to_rownames(
+      "Feature"
+    ) %>%
+
+    as.matrix()
+
+
+  mat <- mat[
+    feat_order[
+      feat_order %in%
+        rownames(mat)
+    ],
+    ,
+    drop = FALSE
+  ]
+
+
+  if (
+    !is.null(
+      desired_x_order
+    )
+  ) {
+
+    cols <- intersect(
+      desired_x_order,
+      colnames(mat)
+    )
+
+
+    mat <- mat[
+      ,
+      cols,
+      drop = FALSE
+    ]
+  }
+
+
+  pal <- colorRampPalette(
+    c(
+      "#480ca8",
+      "#fff9c5",
+      "#ffbe0b"
+    )
+  )(200)
+
+
+  brks <- seq(
+    color_min,
+    color_max,
+    length.out = 201
+  )
+
+
+  pheatmap(
+    mat,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    main = title,
+    color = pal,
+    breaks = brks,
+    fontsize = 9,
+    fontsize_row = 9,
+    fontsize_col = 10,
+    angle_col = 45,
+    legend = TRUE
+  )
+}
+
+# ======================================================
+# FEATURE ORDER
+# ======================================================
+
+desired_y_order <- c(
+  "XR_12m",
+  "XR_1h",
+  "XR_4h",
+  "XR_8h",
+  "XR_16h",
+  "XR_24h",
+  "XR_48h",
+
+  "DNase",
+  "H3K27ac",
+  "H3K4me1",
+  "H3K4me3",
+  "H3K27me3",
+  "H3K9me3",
+  "CTCF",
+
+  "RNA_RPKM",
+
+  "3D_Distance"
+)
+
+# ======================================================
+# HIGH-CPD SHAP
+# ======================================================
+
+cat(
+  "\n[SHAP] High-CPD subset...\n"
+)
+
+
+shap_high <- xgb_shap_long(
+  fit_high_xgb,
+  high_cpd_df,
+  top_n = 25
+)
+
+
+high_levels <- levels(
+  high_cpd_df$Group
+)
+
+
+print(
+  high_levels
+)
+
+
+# ======================================================
+# C_H_M_H
+# ======================================================
+
+p_high1 <- plot_shap_violin_raw(
+  shap_high$long,
+  class_label = high_levels[1],
+  feat_order = desired_y_order,
+  title = paste0(
+    "High-CPD: ",
+    high_levels[1]
+  ),
+  xlim_override = c(
+    -0.6,
+    0.6
+  ),
+  xbreaks_override = seq(
+    -0.6,
+    0.6,
+    0.1
+  )
+)
+
+
+# ======================================================
+# C_H_M_L
+# ======================================================
+
+p_high2 <- plot_shap_violin_raw(
+  shap_high$long,
+  class_label = high_levels[2],
+  feat_order = desired_y_order,
+  title = paste0(
+    "High-CPD: ",
+    high_levels[2]
+  ),
+  xlim_override = c(
+    -0.6,
+    0.6
+  ),
+  xbreaks_override = seq(
+    -0.6,
+    0.6,
+    0.1
+  )
+)
+
+
+high_shap_combined <- (
+  p_high1 +
+    p_high2
+) +
+  plot_layout(
+    ncol = 2
+  )
+
+
+print(
+  high_shap_combined
+)
+
+
+# ======================================================
+# HEATMAP
+# ======================================================
+
+plot_feature_raw_heatmap(
+  shap_high$long,
+  desired_y_order,
+  title = "High-CPD: Feature Z-score heatmap",
+  desired_x_order = high_levels
+)
+
+
+# ggsave(
+#   "SHAP_HighCPD_TwoGroups.pdf",
+#   high_shap_combined,
+#   width = 12,
+#   height = 6
+# )
+
+# ======================================================
+# LOW-CPD SHAP
+# ======================================================
+
+cat(
+  "\n[SHAP] Low-CPD subset...\n"
+)
+
+
+shap_low <- xgb_shap_long(
+  fit_low_xgb,
+  low_cpd_df,
+  top_n = 25
+)
+
+
+low_levels <- levels(
+  low_cpd_df$Group
+)
+
+
+print(
+  low_levels
+)
+
+
+# ======================================================
+# C_L_M_H
+# ======================================================
+
+p_low1 <- plot_shap_violin_raw(
+  shap_low$long,
+  class_label = low_levels[1],
+  feat_order = desired_y_order,
+  title = paste0(
+    "Low-CPD: ",
+    low_levels[1]
+  ),
+  xlim_override = c(
+    -0.6,
+    0.6
+  ),
+  xbreaks_override = seq(
+    -0.6,
+    0.6,
+    0.1
+  )
+)
+
+
+# ======================================================
+# C_L_M_L
+# ======================================================
+
+p_low2 <- plot_shap_violin_raw(
+  shap_low$long,
+  class_label = low_levels[2],
+  feat_order = desired_y_order,
+  title = paste0(
+    "Low-CPD: ",
+    low_levels[2]
+  ),
+  xlim_override = c(
+    -0.6,
+    0.6
+  ),
+  xbreaks_override = seq(
+    -0.6,
+    0.6,
+    0.1
+  )
+)
+
+
+low_shap_combined <- (
+  p_low1 +
+    p_low2
+) +
+  plot_layout(
+    ncol = 2
+  )
+
+
+print(
+  low_shap_combined
+)
+
+
+# ======================================================
+# HEATMAP
+# ======================================================
+
+plot_feature_raw_heatmap(
+  shap_low$long,
+  desired_y_order,
+  title = "Low-CPD: Feature Z-score heatmap",
+  desired_x_order = low_levels
+)
+
+
+# ggsave(
+#   "SHAP_LowCPD_TwoGroups.pdf",
+#   low_shap_combined,
+#   width = 12,
+#   height = 6
+# )
+
+# ==========================================================
+# GLOBAL SHAP IMPORTANCE
+# Mean |SHAP| normalized to 100%
+# ==========================================================
+
+compute_shap_global_importance <- function(
+  fit_obj,
+  df,
+  target = "Group"
+) {
+
+  X_all <- df %>%
+    select(
+      -all_of(target)
+    )
+
+
+  X <- X_all[
+    ,
+    fit_obj$kept_features,
+    drop = FALSE
+  ]
+
+
+  mat <- as.matrix(X)
+
+
+  shap_mat <- predict(
+    fit_obj$model,
+    mat,
+    predcontrib = TRUE
+  )
+
+
+  shap_df <- as.data.frame(
+    shap_mat
+  )
+
+
+  if (
+    "BIAS" %in%
+      colnames(shap_df)
+  ) {
+
+    shap_df$BIAS <- NULL
+  }
+
+
+  imp <- tibble(
+    Feature = colnames(
+      shap_df
+    ),
+
+    MeanAbsSHAP = colMeans(
+      abs(
+        shap_df
+      ),
+      na.rm = TRUE
+    )
+  ) %>%
+
+    arrange(
+      desc(
+        MeanAbsSHAP
+      )
+    ) %>%
+
+    mutate(
+      RelativePercent =
+        100 *
+        MeanAbsSHAP /
+        sum(
+          MeanAbsSHAP
+        )
+    )
+
+
+  return(
+    imp
+  )
+}
+
+
+# ==========================================================
+# HIGH CPD
+# ==========================================================
+
+shap_imp_high <- compute_shap_global_importance(
+  fit_high_xgb,
+  high_cpd_df
+)
+
+
+# ==========================================================
+# LOW CPD
+# ==========================================================
+
+shap_imp_low <- compute_shap_global_importance(
+  fit_low_xgb,
+  low_cpd_df
+)
+
+# ==========================================================
+# INCLUDE ALL TRAINED FEATURES
+# ==========================================================
+
+all_feats_high <- fit_high_xgb$kept_features
+
+all_feats_low <- fit_low_xgb$kept_features
+
+
+# ==========================================================
+# HIGH CPD
+# ==========================================================
+
+shap_imp_high_full <- full_join(
+  tibble(
+    Feature = all_feats_high
+  ),
+  shap_imp_high,
+  by = "Feature"
+) %>%
+
+  mutate(
+    MeanAbsSHAP = ifelse(
+      is.na(MeanAbsSHAP),
+      0,
+      MeanAbsSHAP
+    ),
+
+    RelativePercent = ifelse(
+      is.na(RelativePercent),
+      0,
+      RelativePercent
+    )
+  ) %>%
+
+  arrange(
+    desc(
+      RelativePercent
+    )
+  )
+
+
+# ==========================================================
+# LOW CPD
+# ==========================================================
+
+shap_imp_low_full <- full_join(
+  tibble(
+    Feature = all_feats_low
+  ),
+  shap_imp_low,
+  by = "Feature"
+) %>%
+
+  mutate(
+    MeanAbsSHAP = ifelse(
+      is.na(MeanAbsSHAP),
+      0,
+      MeanAbsSHAP
+    ),
+
+    RelativePercent = ifelse(
+      is.na(RelativePercent),
+      0,
+      RelativePercent
+    )
+  ) %>%
+
+  arrange(
+    desc(
+      RelativePercent
+    )
+  )
+
+
+print(
+  shap_imp_high_full
+)
+
+print(
+  shap_imp_low_full
+)
+
+# ==========================================================
+# GLOBAL SHAP PLOT FUNCTION
+# ==========================================================
+
+plot_shap_importance <- function(
+  imp_df,
+  title,
+  fill_col = "#4361ee"
+) {
+
+  ggplot(
+    imp_df,
+    aes(
+      x = reorder(
+        Feature,
+        RelativePercent
+      ),
+      y = RelativePercent
+    )
+  ) +
+
+    geom_col(
+      fill = fill_col
+    ) +
+
+    coord_flip(
+      clip = "off"
+    ) +
+
+    scale_y_continuous(
+      limits = c(
+        0,
+        25
+      ),
+      breaks = seq(
+        0,
+        25,
+        5
+      ),
+      labels = function(x) {
+        sprintf(
+          "%.1f%%",
+          x
+        )
+      },
+      expand = expansion(
+        mult = c(
+          0,
+          0
+        )
+      )
+    ) +
+
+    labs(
+      title = title,
+      x = "Feature",
+      y = "Relative importance (%)"
+    ) +
+
+    theme_classic(
+      base_size = 12
+    ) +
+
+    theme(
+      plot.margin = ggplot2::margin(
+        5.5,
+        12,
+        5.5,
+        5.5
+      ),
+
+      axis.text.y = element_text(
+        size = 9,
+        color = "black"
+      ),
+
+      axis.text.x = element_text(
+        color = "black"
+      ),
+
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold"
+      )
+    )
+}
+
+
+# ==========================================================
+# HIGH CPD
+# ==========================================================
+
+p_high_shap_global <- plot_shap_importance(
+  shap_imp_high_full,
+  "Global SHAP Feature Importance (%) - High-CPD",
+  fill_col = "#ffd60a"
+)
+
+
+# ==========================================================
+# LOW CPD
+# ==========================================================
+
+p_low_shap_global <- plot_shap_importance(
+  shap_imp_low_full,
+  "Global SHAP Feature Importance (%) - Low-CPD",
+  fill_col = "#9EAAE0"
+)
+
+
+print(
+  p_high_shap_global
+)
+
+print(
+  p_low_shap_global
+)
+
+
+# ==========================================================
+# SAVE TABLES
+# ==========================================================
+
+write_tsv(
+  shap_imp_high_full,
+  "Global_SHAP_Importance_HighCPD_3Ddistance.tsv"
+)
+
+
+write_tsv(
+  shap_imp_low_full,
+  "Global_SHAP_Importance_LowCPD_3Ddistance.tsv"
+)
+
+# ==========================================================
+# GROUP-MEAN LOCAL SHAP CONTRIBUTION
+# SIGNED
+# ==========================================================
+
+compute_local_shap_signed <- function(
+  fit_obj,
+  df,
+  target = "Group"
+) {
+
+  X_all <- df %>%
+    select(
+      -all_of(target)
+    )
+
+
+  grp <- df[[target]]
+
+
+  # ========================================================
+  # Exact trained features
+  # ========================================================
+
+  X <- X_all[
+    ,
+    fit_obj$kept_features,
+    drop = FALSE
+  ]
+
+
+  mat <- as.matrix(X)
+
+
+  # ========================================================
+  # SHAP
+  # ========================================================
+
+  shap_mat <- predict(
+    fit_obj$model,
+    mat,
+    predcontrib = TRUE
+  )
+
+
+  shap_df <- as.data.frame(
+    shap_mat
+  )
+
+
+  if (
+    "BIAS" %in%
+      colnames(shap_df)
+  ) {
+
+    shap_df$BIAS <- NULL
+  }
+
+
+  # ========================================================
+  # Sample ID
+  # ========================================================
+
+  sample_ids <- paste0(
+    "S",
+    seq_len(
+      nrow(shap_df)
+    )
+  )
+
+
+  shap_df$Sample <- sample_ids
+
+
+  # ========================================================
+  # Long format
+  # ========================================================
+
+  local_long <- shap_df %>%
+
+    pivot_longer(
+      cols = -Sample,
+      names_to = "Feature",
+      values_to = "LocalImportance"
+    ) %>%
+
+    left_join(
+      tibble(
+        Sample = sample_ids,
+        Group = as.character(grp)
+      ),
+      by = "Sample"
+    )
+
+
+  return(
+    local_long
+  )
+}
+
+
+# ==========================================================
+# CALCULATE HIGH / LOW
+# ==========================================================
+
+local_high <- compute_local_shap_signed(
+  fit_high_xgb,
+  high_cpd_df
+)
+
+
+local_low <- compute_local_shap_signed(
+  fit_low_xgb,
+  low_cpd_df
+)
+
+
+local_combined <- bind_rows(
+  local_high,
+  local_low
+)
+
+# ==========================================================
+# FEATURE ORDER
+# ==========================================================
+
+desired_feature_order <- c(
+  "XR_12m",
+  "XR_1h",
+  "XR_4h",
+  "XR_8h",
+  "XR_16h",
+  "XR_24h",
+  "XR_48h",
+
+  "DNase",
+  "H3K27ac",
+  "H3K4me1",
+  "H3K4me3",
+  "H3K27me3",
+  "H3K9me3",
+  "CTCF",
+
+  "RNA_RPKM",
+
+  "3D_Distance"
+)
+
+
+local_combined$Feature <- factor(
+  local_combined$Feature,
+  levels = desired_feature_order
+)
+
+
+# ==========================================================
+# GROUP ORDER
+# ==========================================================
+
+local_combined$Group <- factor(
+  local_combined$Group,
+  levels = c(
+    "C_H_M_H",
+    "C_H_M_L",
+    "C_L_M_H",
+    "C_L_M_L"
+  )
+)
+
+
+# ==========================================================
+# GROUP MEAN SHAP
+# ==========================================================
+
+avg_local_df <- local_combined %>%
+
+  group_by(
+    Group,
+    Feature
+  ) %>%
+
+  summarise(
+    MeanLocalImportance = mean(
+      LocalImportance,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+
+print(
+  avg_local_df
+)
+
+# ==========================================================
+# SIGNED LOCAL SHAP PLOT
+# ==========================================================
+
+p_local_signed <- ggplot(
+  avg_local_df,
+  aes(
+    x = Feature,
+    y = MeanLocalImportance,
+    fill = Group
+  )
+) +
+
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+
+  geom_bar(
+    stat = "identity",
+    position = position_dodge(
+      width = 0.8
+    ),
+    width = 0.7
+  ) +
+
+  scale_fill_manual(
+    values = c(
+      "C_H_M_H" = "#F28C9D",
+      "C_H_M_L" = "#F3E065",
+      "C_L_M_H" = "#65C9F3",
+      "C_L_M_L" = "#9EAAE0"
+    )
+  ) +
+
+  scale_y_continuous(
+    limits = c(
+      -0.1,
+      0.2
+    ),
+    breaks = seq(
+      -0.1,
+      0.2,
+      by = 0.05
+    )
+  ) +
+
+  labs(
+    title = "Average Local (SHAP) Contribution Across 4 Groups",
+    x = "Feature",
+    y = "Mean SHAP (signed)",
+    fill = "Group"
+  ) +
+
+  theme_classic(
+    base_size = 14
+  ) +
+
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 11
+    ),
+
+    axis.text.y = element_text(
+      size = 12
+    ),
+
+    legend.position = "top",
+
+    legend.title = element_blank(),
+
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 0.8
+    )
+  )
+
+
+print(
+  p_local_signed
+)
+
+
+# ggsave(
+#   "Average_Local_SHAP_Contribution_4Groups.pdf",
+#   p_local_signed,
+#   width = 10,
+#   height = 5
+# )
+
+
+# write_tsv(
+#   avg_local_df,
+#   "Average_Local_SHAP_Contribution_4Groups.tsv"
+# )
+```
+
+
+#ANOVA
+
+```{r}
+# =========================================================
+# ANOVA / KRUSKAL-WALLIS
+# =========================================================
+
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+
+
+# =========================================================
+# MODEL DATA
+# =========================================================
+
+MD <- MODEL_data
+
+
+MD$Group <- factor(
+  MD$Group,
+  levels = c(
+    "C_H_M_H",
+    "C_H_M_L",
+    "C_L_M_H",
+    "C_L_M_L"
+  )
+)
+
+
+colnames(MD) <- make.names(
+  colnames(MD),
+  unique = TRUE
+)
+
+
+feature_cols <- setdiff(
+  names(MD),
+  "Group"
+)
+
+
+feature_cols <- feature_cols[
+  sapply(
+    MD[
+      feature_cols
+    ],
+    is.numeric
+  )
+]
+
+
+print(
+  feature_cols
+)
+
+# =========================================================
+# ANOVA FUNCTION
+# =========================================================
+
+run_anova_one <- function(
+  df,
+  feat,
+  group_col = "Group"
+) {
+
+  dsub <- df[
+    ,
+    c(
+      feat,
+      group_col
+    )
+  ]
+
+
+  ok <- is.finite(
+    dsub[[feat]]
+  ) &
+    !is.na(
+      dsub[[group_col]]
+    )
+
+
+  dsub <- dsub[
+    ok,
+    ,
+    drop = FALSE
+  ]
+
+
+  if (
+    nrow(dsub) < 2 ||
+    length(
+      unique(
+        dsub[[group_col]]
+      )
+    ) < 2
+  ) {
+
+    return(
+      tibble(
+        feature = feat,
+        F = NA_real_,
+        p = NA_real_,
+        ss_between = NA_real_,
+        ss_total = NA_real_,
+        eta2 = NA_real_,
+        df_between = NA_integer_,
+        df_within = NA_integer_
+      )
+    )
+  }
+
+
+  fml <- as.formula(
+    paste0(
+      "`",
+      feat,
+      "` ~ ",
+      group_col
+    )
+  )
+
+
+  out <- tryCatch({
+
+    fit <- aov(
+      fml,
+      data = dsub
+    )
+
+
+    an <- summary(
+      fit
+    )[[1]]
+
+
+    Fval <- an[
+      1,
+      "F value"
+    ]
+
+
+    pval <- an[
+      1,
+      "Pr(>F)"
+    ]
+
+
+    ss_between <- an[
+      1,
+      "Sum Sq"
+    ]
+
+
+    ss_within <- an[
+      2,
+      "Sum Sq"
+    ]
+
+
+    ss_total <-
+      ss_between +
+      ss_within
+
+
+    df_between <- an[
+      1,
+      "Df"
+    ]
+
+
+    df_within <- an[
+      2,
+      "Df"
+    ]
+
+
+    eta2 <- ifelse(
+      ss_total > 0,
+      ss_between /
+        ss_total,
+      NA_real_
+    )
+
+
+    tibble(
+      feature = feat,
+      F = as.numeric(Fval),
+      p = as.numeric(pval),
+      ss_between = as.numeric(
+        ss_between
+      ),
+      ss_total = as.numeric(
+        ss_total
+      ),
+      eta2 = eta2,
+      df_between = as.integer(
+        df_between
+      ),
+      df_within = as.integer(
+        df_within
+      )
+    )
+
+  }, error = function(e) {
+
+    tibble(
+      feature = feat,
+      F = NA_real_,
+      p = NA_real_,
+      ss_between = NA_real_,
+      ss_total = NA_real_,
+      eta2 = NA_real_,
+      df_between = NA_integer_,
+      df_within = NA_integer_
+    )
+
+  })
+
+
+  out
+}
+
+
+# =========================================================
+# KRUSKAL-WALLIS FUNCTION
+# =========================================================
+
+run_kw_one <- function(
+  df,
+  feat,
+  group_col = "Group"
+) {
+
+  dsub <- df[
+    ,
+    c(
+      feat,
+      group_col
+    )
+  ]
+
+
+  ok <- is.finite(
+    dsub[[feat]]
+  ) &
+    !is.na(
+      dsub[[group_col]]
+    )
+
+
+  dsub <- dsub[
+    ok,
+    ,
+    drop = FALSE
+  ]
+
+
+  if (
+    nrow(dsub) < 2 ||
+    length(
+      unique(
+        dsub[[group_col]]
+      )
+    ) < 2
+  ) {
+
+    return(
+      tibble(
+        feature = feat,
+        kw_stat = NA_real_,
+        kw_p = NA_real_
+      )
+    )
+  }
+
+
+  fml <- as.formula(
+    paste0(
+      "`",
+      feat,
+      "` ~ ",
+      group_col
+    )
+  )
+
+
+  out <- tryCatch({
+
+    kw <- suppressWarnings(
+      kruskal.test(
+        fml,
+        data = dsub
+      )
+    )
+
+
+    tibble(
+      feature = feat,
+      kw_stat = as.numeric(
+        kw$statistic
+      ),
+      kw_p = as.numeric(
+        kw$p.value
+      )
+    )
+
+  }, error = function(e) {
+
+    tibble(
+      feature = feat,
+      kw_stat = NA_real_,
+      kw_p = NA_real_
+    )
+
+  })
+
+
+  out
+}
+
+
+# =========================================================
+# RUN ALL FEATURES
+# =========================================================
+
+anova_df <- do.call(
+  rbind,
+  lapply(
+    feature_cols,
+    function(f) {
+
+      run_anova_one(
+        MD,
+        f,
+        "Group"
+      )
+
+    }
+  )
+) %>%
+
+  mutate(
+    p_adj_BH = p.adjust(
+      p,
+      method = "BH"
+    )
+  )
+
+
+kw_df <- do.call(
+  rbind,
+  lapply(
+    feature_cols,
+    function(f) {
+
+      run_kw_one(
+        MD,
+        f,
+        "Group"
+      )
+
+    }
+  )
+)
+
+
+kw_df <- kw_df %>%
+  mutate(
+    kw_p_adj_BH = p.adjust(
+      kw_p,
+      method = "BH"
+    )
+  )
+
+
+res_ranked <- anova_df %>%
+
+  left_join(
+    kw_df,
+    by = "feature"
+  ) %>%
+
+  arrange(
+    p_adj_BH,
+    p
+  )
+
+
+print(
+  res_ranked
+)
+
+
+write_tsv(
+  res_ranked,
+  "ANOVA_4group_results_3Ddistance.tsv"
+)
+
+# =========================================================
+# SIGNIFICANCE STARS
+# =========================================================
+
+sig_stars <- function(
+  padj
+) {
+
+  out <- rep(
+    "",
+    length(padj)
+  )
+
+
+  out[
+    !is.na(padj) &
+      padj < 0.05
+  ] <- "*"
+
+
+  out[
+    !is.na(padj) &
+      padj < 0.01
+  ] <- "**"
+
+
+  out[
+    !is.na(padj) &
+      padj < 0.001
+  ] <- "***"
+
+
+  out[
+    !is.na(padj) &
+      padj < 0.0001
+  ] <- "****"
+
+
+  out
+}
+
+
+# =========================================================
+# ANOVA ETA2 BARPLOT
+# =========================================================
+
+plot_anova_eta_bars <- function(
+  res_ranked,
+  top_n = 33,
+  fill_col = "#F28C9D"
+) {
+
+  df <- res_ranked %>%
+
+    filter(
+      !is.na(eta2)
+    ) %>%
+
+    slice_max(
+      order_by = eta2,
+      n = top_n
+    ) %>%
+
+    mutate(
+      feature = factor(
+        feature,
+        levels = rev(
+          feature
+        )
+      ),
+
+      stars = sig_stars(
+        p_adj_BH
+      )
+    )
+
+
+  pad <- max(
+    df$eta2,
+    na.rm = TRUE
+  ) * 0.02
+
+
+  ggplot(
+    df,
+    aes(
+      x = feature,
+      y = eta2
+    )
+  ) +
+
+    geom_col(
+      fill = fill_col
+    ) +
+
+    geom_text(
+      aes(
+        y = eta2 + pad,
+        label = stars
+      ),
+      hjust = 0,
+      size = 5
+    ) +
+
+    coord_flip(
+      clip = "off"
+    ) +
+
+    scale_y_continuous(
+      expand = expansion(
+        mult = c(
+          0,
+          0.12
+        )
+      )
+    ) +
+
+    theme_classic() +
+
+    theme(
+      plot.margin = ggplot2::margin(
+        5.5,
+        30,
+        5.5,
+        5.5
+      ),
+
+      axis.title.y = element_blank()
+    ) +
+
+    labs(
+      title = "Features by effect size (eta2)",
+      y = expression(
+        eta^2
+      )
+    )
+}
+
+
+p_anova <- plot_anova_eta_bars(
+  res_ranked,
+  top_n = 33,
+  fill_col = "#F28C9D"
+)
+
+
+print(
+  p_anova
+)
+
+# =========================================================
+# HIGH-CPD
+#
+# Mutation High vs Mutation Low
+# =========================================================
+
+MD_high <- MD %>%
+
+  filter(
+    Group %in% c(
+      "C_H_M_H",
+      "C_H_M_L"
+    )
+  ) %>%
+
+  mutate(
+    Group = factor(
+      Group,
+      levels = c(
+        "C_H_M_H",
+        "C_H_M_L"
+      )
+    )
+  )
+
+
+# =========================================================
+# LOW-CPD
+#
+# Mutation High vs Mutation Low
+# =========================================================
+
+MD_low <- MD %>%
+
+  filter(
+    Group %in% c(
+      "C_L_M_H",
+      "C_L_M_L"
+    )
+  ) %>%
+
+  mutate(
+    Group = factor(
+      Group,
+      levels = c(
+        "C_L_M_H",
+        "C_L_M_L"
+      )
+    )
+  )
+
+
+table(
+  MD_high$Group
+)
+
+table(
+  MD_low$Group
+)
+
+# =========================================================
+# WELCH T-TEST + EFFECT SIZE
+# =========================================================
+
+run_ttest_one <- function(
+  df,
+  feat,
+  group_col = "Group"
+) {
+
+  dsub <- df[
+    ,
+    c(
+      feat,
+      group_col
+    )
+  ]
+
+
+  ok <- is.finite(
+    dsub[[feat]]
+  ) &
+    !is.na(
+      dsub[[group_col]]
+    )
+
+
+  dsub <- dsub[
+    ok,
+    ,
+    drop = FALSE
+  ]
+
+
+  groups <- levels(
+    droplevels(
+      dsub[[group_col]]
+    )
+  )
+
+
+  if (
+    length(groups) != 2L ||
+    nrow(dsub) < 3
+  ) {
+
+    return(
+      tibble(
+        feature = feat,
+        group1 = NA_character_,
+        group2 = NA_character_,
+        n1 = NA_integer_,
+        n2 = NA_integer_,
+        mean1 = NA_real_,
+        mean2 = NA_real_,
+        diff = NA_real_,
+        t = NA_real_,
+        df = NA_real_,
+        p = NA_real_,
+        d = NA_real_,
+        g = NA_real_,
+        eta2 = NA_real_
+      )
+    )
+  }
+
+
+  g1 <- groups[1]
+
+  g2 <- groups[2]
+
+
+  x1 <- dsub[
+    dsub[[group_col]] == g1,
+    feat
+  ][[1]]
+
+
+  x2 <- dsub[
+    dsub[[group_col]] == g2,
+    feat
+  ][[1]]
+
+
+  n1 <- length(x1)
+
+  n2 <- length(x2)
+
+
+  m1 <- mean(x1)
+
+  m2 <- mean(x2)
+
+
+  s1 <- stats::sd(x1)
+
+  s2 <- stats::sd(x2)
+
+
+  # =======================================================
+  # Welch t-test
+  # =======================================================
+
+  tt <- stats::t.test(
+    x1,
+    x2,
+    var.equal = FALSE
+  )
+
+
+  # =======================================================
+  # Cohen's d
+  # =======================================================
+
+  sp2 <- (
+    (
+      n1 - 1
+    ) *
+      s1^2 +
+      (
+        n2 - 1
+      ) *
+      s2^2
+  ) /
+    max(
+      1,
+      n1 +
+        n2 -
+        2
+    )
+
+
+  sp <- sqrt(sp2)
+
+
+  d <- (
+    m1 -
+      m2
+  ) /
+    ifelse(
+      sp > 0,
+      sp,
+      NA_real_
+    )
+
+
+  # =======================================================
+  # Hedges' g
+  # =======================================================
+
+  J <- 1 -
+    3 /
+    (
+      4 *
+        (
+          n1 +
+            n2
+        ) -
+        9
+    )
+
+
+  g <- J * d
+
+
+  # =======================================================
+  # eta2
+  # =======================================================
+
+  tval <- unname(
+    tt$statistic
+  )
+
+
+  dfre <- unname(
+    tt$parameter
+  )
+
+
+  eta2 <- if (
+    is.finite(tval) &&
+    is.finite(dfre)
+  ) {
+
+    tval^2 /
+      (
+        tval^2 +
+          dfre
+      )
+
+  } else {
+
+    NA_real_
+  }
+
+
+  tibble(
+    feature = feat,
+    group1 = g1,
+    group2 = g2,
+    n1 = n1,
+    n2 = n2,
+    mean1 = m1,
+    mean2 = m2,
+    diff = m1 - m2,
+    t = tval,
+    df = dfre,
+    p = unname(
+      tt$p.value
+    ),
+    d = d,
+    g = g,
+    eta2 = eta2
+  )
+}
+
+
+# =========================================================
+# HIGH CPD
+# =========================================================
+
+tt_high <- do.call(
+  rbind,
+  lapply(
+    feature_cols,
+    function(f) {
+
+      run_ttest_one(
+        MD_high,
+        f,
+        "Group"
+      )
+
+    }
+  )
+) %>%
+
+  mutate(
+    p_adj_BH = p.adjust(
+      p,
+      method = "BH"
+    )
+  ) %>%
+
+  arrange(
+    p_adj_BH,
+    p
+  )
+
+
+# =========================================================
+# LOW CPD
+# =========================================================
+
+tt_low <- do.call(
+  rbind,
+  lapply(
+    feature_cols,
+    function(f) {
+
+      run_ttest_one(
+        MD_low,
+        f,
+        "Group"
+      )
+
+    }
+  )
+) %>%
+
+  mutate(
+    p_adj_BH = p.adjust(
+      p,
+      method = "BH"
+    )
+  ) %>%
+
+  arrange(
+    p_adj_BH,
+    p
+  )
+
+
+# =========================================================
+# CHECK
+# =========================================================
+
+print(
+  tt_high
+)
+
+print(
+  tt_low
+)
+
+
+# =========================================================
+# SAVE
+# =========================================================
+
+write_tsv(
+  tt_high,
+  "TTest_HighCPD_results_3Ddistance.tsv"
+)
+
+
+write_tsv(
+  tt_low,
+  "TTest_LowCPD_results_3Ddistance.tsv"
+)
+
+# =========================================================
+# ETA2 BARPLOT FUNCTION
+# =========================================================
+
+plot_eta_bars <- function(
+  tt_df,
+  title,
+  top_n = 33,
+  fill_col = "grey70"
+) {
+
+  df <- tt_df %>%
+
+    filter(
+      is.finite(
+        eta2
+      )
+    ) %>%
+
+    slice_max(
+      order_by = eta2,
+      n = top_n
+    ) %>%
+
+    mutate(
+      feature = factor(
+        feature,
+        levels = rev(
+          feature
+        )
+      ),
+
+      stars = sig_stars(
+        p_adj_BH
+      )
+    )
+
+
+  pad <- max(
+    df$eta2,
+    na.rm = TRUE
+  ) * 0.02
+
+
+  ggplot(
+    df,
+    aes(
+      x = feature,
+      y = eta2
+    )
+  ) +
+
+    geom_col(
+      fill = fill_col
+    ) +
+
+    geom_text(
+      aes(
+        y = eta2 + pad,
+        label = stars
+      ),
+      hjust = 0,
+      size = 5
+    ) +
+
+    coord_flip(
+      clip = "off"
+    ) +
+
+    scale_y_continuous(
+      expand = expansion(
+        mult = c(
+          0,
+          0.12
+        )
+      )
+    ) +
+
+    theme_classic() +
+
+    theme(
+      plot.margin = ggplot2::margin(
+        5.5,
+        30,
+        5.5,
+        5.5
+      ),
+
+      axis.title.y = element_blank()
+    ) +
+
+    labs(
+      title = title,
+      y = expression(
+        eta^2
+      )
+    )
+}
+
+
+# =========================================================
+# COLORS
+# =========================================================
+
+col_high <- "#F3E065"
+
+col_low <- "#9EAAE0"
+
+
+# =========================================================
+# HIGH CPD
+# =========================================================
+
+p_high <- plot_eta_bars(
+  tt_high,
+  "High-CPD: features by effect size (eta2)",
+  top_n = 33,
+  fill_col = col_high
+)
+
+
+# =========================================================
+# LOW CPD
+# =========================================================
+
+p_low <- plot_eta_bars(
+  tt_low,
+  "Low-CPD: features by effect size (eta2)",
+  top_n = 33,
+  fill_col = col_low
+)
+
+
+print(
+  p_high
+)
+
+print(
+  p_low
+)
+
+
+p_high +
+  p_low +
+  plot_layout(
+    ncol = 2
+  )
+```
+
+
+
+
+
+
+
+
+
+

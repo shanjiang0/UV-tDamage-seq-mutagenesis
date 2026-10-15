@@ -1,0 +1,229 @@
+---
+title: "Figure1"
+author: "Shan Jiang"
+date: "2025-06-25"
+output: html_document
+---
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+##CIS1
+
+file_path <- "CIS1_nt_abun.txt"
+data <- read.table(file_path, header=TRUE, sep="", row.names=1)
+
+data <- t(data)
+
+data <- as.data.frame(data)
+
+data$Position <- c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4")  # Modify this based on your actual positions
+
+df_melt <- melt(data, id.vars = 'Position', variable.name = 'Nucleotide', value.name = 'Frequency')
+
+df_melt$Position <- factor(data$Position, levels = c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4"))
+
+df_melt$Nucleotide <- factor(df_melt$Nucleotide, levels = c('G', 'A', 'C', 'T'))
+
+ggplot(df_melt, aes(x = as.factor(Position), y = Frequency, fill = Nucleotide)) + 
+  geom_bar(stat = 'identity', colour = "black") +  # Add black outline to each bar
+  scale_fill_manual(values = c('#90dbf4','#F28C9D','#F3E065','#9bb1ff')) + 
+  labs(title = 'CIS1: Target Read', 
+       x = 'Position', 
+       y = 'Nucleotide Frequency') + 
+  theme_minimal() + # Minimal theme for a clean white background 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  # Center the title and set font size
+    panel.grid.major = element_blank()  
+  )
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+##CIS12
+
+file_path <- "CIS2_nt_abun.txt"
+data <- read.table(file_path, header=TRUE, sep="", row.names=1)
+
+data <- t(data)
+
+data <- as.data.frame(data)
+
+data$Position <- c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4")  # Modify this based on your actual positions
+
+df_melt <- melt(data, id.vars = 'Position', variable.name = 'Nucleotide', value.name = 'Frequency')
+
+df_melt$Position <- factor(data$Position, levels = c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4"))
+
+df_melt$Nucleotide <- factor(df_melt$Nucleotide, levels = c('G', 'A', 'C', 'T'))
+
+ggplot(df_melt, aes(x = as.factor(Position), y = Frequency, fill = Nucleotide)) + 
+  geom_bar(stat = 'identity', colour = "black") +  # Add black outline to each bar
+  scale_fill_manual(values = c('#90dbf4','#F28C9D','#F3E065','#9bb1ff')) + 
+  labs(title = 'CIS2: Target Read', 
+       x = 'Position', 
+       y = 'Nucleotide Frequency') + 
+  theme_minimal() + # Minimal theme for a clean white background 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  # Center the title and set font size
+    panel.grid.major = element_blank()  
+  )
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+##CPD1
+
+file_path <- "CPD1_nt_abun.txt"
+data <- read.table(file_path, header=TRUE, sep="", row.names=1)
+
+data <- t(data)
+
+data <- as.data.frame(data)
+
+data$Position <- c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4")  # Modify this based on your actual positions
+
+df_melt <- melt(data, id.vars = 'Position', variable.name = 'Nucleotide', value.name = 'Frequency')
+
+df_melt$Position <- factor(data$Position, levels = c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4"))
+
+df_melt$Nucleotide <- factor(df_melt$Nucleotide, levels = c('G', 'A', 'C', 'T'))
+
+ggplot(df_melt, aes(x = as.factor(Position), y = Frequency, fill = Nucleotide)) + 
+  geom_bar(stat = 'identity', colour = "black") +  # Add black outline to each bar
+  scale_fill_manual(values = c('#90dbf4','#F28C9D','#F3E065','#9bb1ff')) + 
+  labs(title = 'CPD1: Target Read', 
+       x = 'Position', 
+       y = 'Nucleotide Frequency') + 
+  theme_minimal() + # Minimal theme for a clean white background 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  # Center the title and set font size
+    panel.grid.major = element_blank()  
+  )
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+##CPD2
+
+file_path <- "CPD2_nt_abun.txt"
+data <- read.table(file_path, header=TRUE, sep="", row.names=1)
+
+data <- t(data)
+
+data <- as.data.frame(data)
+
+data$Position <- c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4")  # Modify this based on your actual positions
+
+df_melt <- melt(data, id.vars = 'Position', variable.name = 'Nucleotide', value.name = 'Frequency')
+
+df_melt$Position <- factor(data$Position, levels = c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4"))
+
+df_melt$Nucleotide <- factor(df_melt$Nucleotide, levels = c('G', 'A', 'C', 'T'))
+
+ggplot(df_melt, aes(x = as.factor(Position), y = Frequency, fill = Nucleotide)) + 
+  geom_bar(stat = 'identity', colour = "black") +  # Add black outline to each bar
+  scale_fill_manual(values = c('#90dbf4','#F28C9D','#F3E065','#9bb1ff')) + 
+  labs(title = 'CPD2: Target Read', 
+       x = 'Position', 
+       y = 'Nucleotide Frequency') + 
+  theme_minimal() + # Minimal theme for a clean white background 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  # Center the title and set font size
+    panel.grid.major = element_blank()  
+  )
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+##CPD1
+
+file_path <- "CTR1_nt_abun.txt"
+data <- read.table(file_path, header=TRUE, sep="", row.names=1)
+
+data <- t(data)
+
+data <- as.data.frame(data)
+
+data$Position <- c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4")  # Modify this based on your actual positions
+
+df_melt <- melt(data, id.vars = 'Position', variable.name = 'Nucleotide', value.name = 'Frequency')
+
+df_melt$Position <- factor(data$Position, levels = c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4"))
+
+df_melt$Nucleotide <- factor(df_melt$Nucleotide, levels = c('G', 'A', 'C', 'T'))
+
+ggplot(df_melt, aes(x = as.factor(Position), y = Frequency, fill = Nucleotide)) + 
+  geom_bar(stat = 'identity', colour = "black") +  # Add black outline to each bar
+  scale_fill_manual(values = c('#90dbf4','#F28C9D','#F3E065','#9bb1ff')) + 
+  labs(title = 'CTR1: Target Read', 
+       x = 'Position', 
+       y = 'Nucleotide Frequency') + 
+  theme_minimal() + # Minimal theme for a clean white background 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  # Center the title and set font size
+    panel.grid.major = element_blank()  
+  )
+
+```
+
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+##CTR2
+
+file_path <- "CTR2_nt_abun.txt"
+data <- read.table(file_path, header=TRUE, sep="", row.names=1)
+
+data <- t(data)
+
+data <- as.data.frame(data)
+
+data$Position <- c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4")  # Modify this based on your actual positions
+
+df_melt <- melt(data, id.vars = 'Position', variable.name = 'Nucleotide', value.name = 'Frequency')
+
+df_melt$Position <- factor(data$Position, levels = c("-6", "-5", "-4", "-3", "-2", "-1", "1", "2", "3", "4"))
+
+df_melt$Nucleotide <- factor(df_melt$Nucleotide, levels = c('G', 'A', 'C', 'T'))
+
+ggplot(df_melt, aes(x = as.factor(Position), y = Frequency, fill = Nucleotide)) + 
+  geom_bar(stat = 'identity', colour = "black") +  # Add black outline to each bar
+  scale_fill_manual(values = c('#90dbf4','#F28C9D','#F3E065','#9bb1ff')) + 
+  labs(title = 'CTR2: Target Read', 
+       x = 'Position', 
+       y = 'Nucleotide Frequency') + 
+  theme_minimal() + # Minimal theme for a clean white background 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  # Center the title and set font size
+    panel.grid.major = element_blank()  
+  )
+
+```
+
+
+
+
+
+

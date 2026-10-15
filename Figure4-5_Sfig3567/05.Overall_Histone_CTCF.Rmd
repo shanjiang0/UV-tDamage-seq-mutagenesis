@@ -1,0 +1,820 @@
+---
+title: "Overall_Histone_TF"
+author: "Shan Jiang"
+date: "2025-03-08"
+output: html_document
+---
+
+
+```{r}
+library(readr)
+library(dplyr)
+MODEL_data_new <- read_tsv("ALL_Combined_10082026.tsv", col_names = TRUE)
+head(MODEL_data_new)
+```
+
+
+```{r}
+# =========================
+# Chromatin mean signal heatmap
+# directly from MODEL_data_new
+# =========================
+
+suppressPackageStartupMessages({
+  library(pheatmap)
+  library(dplyr)
+  library(tidyr)
+})
+
+# ---- 1) Define desired group/feature order ----
+
+desired_cols <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+desired_row_order <- c(
+  "DNase",
+  "H3K27ac",
+  "H3K4me3",
+  "H3K4me1",
+  "H3K27me3",
+  "H3K9me3",
+  "CTCF"
+)
+
+
+# ---- 2) Calculate mean signal for each feature in each group ----
+
+df <- MODEL_data_new %>%
+  select(Group, all_of(desired_row_order)) %>%
+  filter(!is.na(Group)) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = desired_cols
+    )
+  ) %>%
+  group_by(Group) %>%
+  summarise(
+    across(
+      all_of(desired_row_order),
+      ~ mean(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = all_of(desired_row_order),
+    names_to = "feature",
+    values_to = "value"
+  ) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = value
+  )
+
+
+# Check table
+print(df)
+
+
+# ---- 3) Make matrix correctly ----
+
+# First force desired feature order
+df <- df %>%
+  mutate(
+    feature = factor(
+      feature,
+      levels = desired_row_order
+    )
+  ) %>%
+  arrange(feature)
+
+
+# Extract feature names BEFORE removing the column
+feature_names <- as.character(df$feature)
+
+
+# Convert only numeric group columns to matrix
+heatmap_matrix <- as.matrix(
+  df[, desired_cols]
+)
+
+
+# Explicitly assign row names
+rownames(heatmap_matrix) <- feature_names
+
+
+# Ensure numeric
+storage.mode(heatmap_matrix) <- "numeric"
+
+
+# ---- 4) Check matrix ----
+
+print(heatmap_matrix)
+print(rownames(heatmap_matrix))
+print(colnames(heatmap_matrix))
+
+
+# ---- 5) Label matrix ----
+
+num_labels <- matrix(
+  sprintf("%.3f", heatmap_matrix),
+  nrow = nrow(heatmap_matrix),
+  ncol = ncol(heatmap_matrix),
+  dimnames = dimnames(heatmap_matrix)
+)
+
+
+# ---- 6) Colors ----
+
+color_vec <- colorRampPalette(
+  c(
+    "#7678ed",
+    "white",
+    "#fe6d73"
+  )
+)(100)
+
+breaks <- seq(
+  0,
+  3,
+  length.out = 101
+)
+
+
+# ---- 7) Plot ----
+
+pheatmap(
+  heatmap_matrix,
+  scale = "none",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  color = color_vec,
+  breaks = breaks,
+  display_numbers = num_labels,
+  number_color = "black",
+  fontsize_number = 12,
+  main = "Chromatine State",
+  labels_row = desired_row_order,
+  labels_col = desired_cols,
+  fontsize_row = 14,
+  fontsize_col = 14,
+  border_color = "grey80"
+)
+```
+
+```{r}
+# =========================
+# Row-wise normalization for COLOR only
+# =========================
+
+heatmap_matrix_z <- t(
+  scale(
+    t(heatmap_matrix)
+  )
+)
+
+# keep raw values as labels
+num_labels <- matrix(
+  sprintf("%.3f", heatmap_matrix),
+  nrow = nrow(heatmap_matrix),
+  ncol = ncol(heatmap_matrix),
+  dimnames = dimnames(heatmap_matrix)
+)
+
+# symmetric color scale around 0
+max_abs <- max(abs(heatmap_matrix_z), na.rm = TRUE)
+
+color_vec <- colorRampPalette(
+  c("#7678ed", "white", "#fe6d73")
+)(100)
+
+breaks <- seq(
+  -max_abs,
+  max_abs,
+  length.out = 101
+)
+
+pheatmap(
+  heatmap_matrix_z,
+  scale = "none",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  color = color_vec,
+  breaks = breaks,
+  display_numbers = num_labels,
+  number_color = "black",
+  fontsize_number = 12,
+  main = "Chromatin State",
+  labels_row = desired_row_order,
+  labels_col = desired_cols,
+  fontsize_row = 14,
+  fontsize_col = 14,
+  border_color = "grey80"
+)
+```
+
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(pheatmap)
+})
+
+# =========================
+# Heatmap of group-difference p-values for chromatin features
+# =========================
+
+# 1) Define feature order and labels
+
+feature_order <- c(
+  "DNase",
+  "H3K27ac",
+  "H3K4me3",
+  "H3K4me1",
+  "H3K27me3",
+  "H3K9me3",
+  "CTCF"
+)
+
+feature_labels <- c(
+  "DNase"    = "Dnase",
+  "H3K27ac"  = "H3K27ac",
+  "H3K4me3"  = "H3K4me3",
+  "H3K4me1"  = "H3K4me1",
+  "H3K27me3" = "H3K27me3",
+  "H3K9me3"  = "H3K9me3",
+  "CTCF"     = "CTCF"
+)
+
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+
+# 2) Keep needed columns
+
+df0 <- MODEL_data_new %>%
+  select(
+    Group,
+    all_of(feature_order)
+  ) %>%
+  filter(!is.na(Group)) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  )
+
+
+# 3) Run Kruskal-Wallis test for each feature
+
+pval_df <- lapply(
+  feature_order,
+  function(feat) {
+    
+    sub <- df0 %>%
+      select(
+        Group,
+        value = all_of(feat)
+      ) %>%
+      filter(!is.na(value))
+    
+    pval <- kruskal.test(
+      value ~ Group,
+      data = sub
+    )$p.value
+    
+    data.frame(
+      feature = feat,
+      p_value = pval,
+      neg_log10_p = -log10(pval),
+      star = case_when(
+        pval < 0.001 ~ "***",
+        pval < 0.01  ~ "**",
+        pval < 0.05  ~ "*",
+        TRUE         ~ "ns"
+      ),
+      stringsAsFactors = FALSE
+    )
+  }
+) %>%
+  bind_rows()
+
+
+print(pval_df)
+
+
+# 4) Build 1-column heatmap matrix
+
+heatmap_matrix <- matrix(
+  pval_df$neg_log10_p,
+  ncol = 1,
+  dimnames = list(
+    feature_labels[
+      pval_df$feature
+    ],
+    "Group diff"
+  )
+)
+
+
+# 5) Labels: raw p-value + stars
+
+num_labels <- matrix(
+  paste0(
+    sprintf(
+      "%.2e",
+      pval_df$p_value
+    ),
+    "\n",
+    pval_df$star
+  ),
+  ncol = 1,
+  dimnames = dimnames(
+    heatmap_matrix
+  )
+)
+
+
+# 6) Plot
+
+color_vec <- colorRampPalette(
+  c(
+    "#7678ed",
+    "white",
+    "#fe6d73"
+  )
+)(100)
+
+
+pheatmap(
+  heatmap_matrix,
+  scale = "none",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  color = color_vec,
+  display_numbers = num_labels,
+  number_color = "black",
+  fontsize_number = 11,
+  main = "Group difference of chromatin features",
+  labels_row = rownames(heatmap_matrix),
+  labels_col = colnames(heatmap_matrix),
+  fontsize_row = 13,
+  fontsize_col = 13,
+  border_color = "grey80"
+)
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(purrr)
+})
+
+# =========================
+# Pairwise group heatmaps for chromatin features
+# - one panel per feature
+# - fill color = mean difference
+# - text = pairwise significance
+# - diagonal = "-"
+# =========================
+
+
+# 1) Settings
+
+group_order <- c(
+  "C_H_M_H",
+  "C_H_M_L",
+  "C_L_M_H",
+  "C_L_M_L"
+)
+
+
+feature_order <- c(
+  "DNase",
+  "H3K27ac",
+  "H3K4me3",
+  "H3K4me1",
+  "H3K27me3",
+  "H3K9me3",
+  "CTCF"
+)
+
+
+feature_labels <- c(
+  "DNase"    = "Dnase",
+  "H3K27ac"  = "H3K27ac",
+  "H3K4me3"  = "H3K4me3",
+  "H3K4me1"  = "H3K4me1",
+  "H3K27me3" = "H3K27me3",
+  "H3K9me3"  = "H3K9me3",
+  "CTCF"     = "CTCF"
+)
+
+
+# 2) Prepare data
+
+df0 <- MODEL_data_new %>%
+  select(
+    Group,
+    all_of(feature_order)
+  ) %>%
+  filter(!is.na(Group)) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = group_order
+    )
+  )
+
+
+# 3) Function to build pairwise table for one feature
+
+make_pairwise_feature_df <- function(
+  data,
+  feature_name
+) {
+  
+  sub <- data %>%
+    select(
+      Group,
+      value = all_of(feature_name)
+    ) %>%
+    filter(!is.na(value))
+  
+  
+  # group means
+  
+  group_means <- sub %>%
+    group_by(Group) %>%
+    summarise(
+      mean_value = mean(
+        value,
+        na.rm = TRUE
+      ),
+      .groups = "drop"
+    )
+  
+  
+  # all pairwise combinations
+  
+  pair_df <- expand.grid(
+    Group1 = group_order,
+    Group2 = group_order,
+    stringsAsFactors = FALSE
+  ) %>%
+    as_tibble()
+  
+  
+  # add mean difference + p-value
+  
+  pair_df <- pair_df %>%
+    rowwise() %>%
+    mutate(
+      
+      mean1 = group_means$mean_value[
+        match(
+          Group1,
+          group_means$Group
+        )
+      ],
+      
+      mean2 = group_means$mean_value[
+        match(
+          Group2,
+          group_means$Group
+        )
+      ],
+      
+      mean_diff = mean1 - mean2,
+      
+      abs_diff = abs(mean_diff),
+      
+      p_value = if (
+        Group1 == Group2
+      ) {
+        
+        NA_real_
+        
+      } else {
+        
+        x <- sub %>%
+          filter(
+            Group == Group1
+          ) %>%
+          pull(value)
+        
+        y <- sub %>%
+          filter(
+            Group == Group2
+          ) %>%
+          pull(value)
+        
+        wilcox.test(
+          x,
+          y
+        )$p.value
+      }
+    ) %>%
+    ungroup()
+  
+  
+  # adjust p-values within each feature
+  
+  non_diag <- !is.na(
+    pair_df$p_value
+  )
+  
+  pair_df$p_adj <- NA_real_
+  
+  pair_df$p_adj[
+    non_diag
+  ] <- p.adjust(
+    pair_df$p_value[
+      non_diag
+    ],
+    method = "fdr"
+  )
+  
+  
+  # significance labels
+  
+  pair_df <- pair_df %>%
+    mutate(
+      star = case_when(
+        Group1 == Group2 ~ "-",
+        is.na(p_adj)     ~ "",
+        p_adj < 0.001    ~ "***",
+        p_adj < 0.01     ~ "**",
+        p_adj < 0.05     ~ "*",
+        TRUE             ~ "ns"
+      ),
+      
+      Feature = feature_labels[
+        feature_name
+      ]
+    )
+  
+  
+  return(pair_df)
+}
+
+
+# 4) Build results for all features
+
+heatmap_df <- map_dfr(
+  feature_order,
+  ~ make_pairwise_feature_df(
+    df0,
+    .x
+  )
+)
+
+
+# 5) Factor order for plotting
+
+heatmap_df <- heatmap_df %>%
+  mutate(
+    
+    Group1 = factor(
+      Group1,
+      levels = group_order
+    ),
+    
+    Group2 = factor(
+      Group2,
+      levels = group_order
+    ),
+    
+    Feature = factor(
+      Feature,
+      levels = feature_labels[
+        feature_order
+      ]
+    )
+  )
+
+
+print(heatmap_df)
+
+
+# Optional: save numeric results table
+
+write.csv(
+  heatmap_df,
+  "Chromatin_feature_pairwise_wilcox_results.csv",
+  row.names = FALSE
+)
+
+
+# 6) Plot full pairwise heatmap
+
+p <- ggplot(
+  heatmap_df,
+  aes(
+    x = Group1,
+    y = Group2,
+    fill = mean_diff
+  )
+) +
+  
+  geom_tile(
+    color = "white",
+    linewidth = 0.8
+  ) +
+  
+  geom_text(
+    aes(
+      label = star
+    ),
+    color = "black",
+    size = 4.5,
+    fontface = "bold"
+  ) +
+  
+  facet_wrap(
+    ~ Feature,
+    ncol = 3
+  ) +
+  
+  scale_fill_gradient2(
+    low = "#7678ed",
+    mid = "white",
+    high = "#fe6d73",
+    midpoint = 0,
+    name = "Mean diff"
+  ) +
+  
+  labs(
+    title = "Pairwise group differences across chromatin features",
+    x = "Group",
+    y = "Group"
+  ) +
+  
+  theme_classic(
+    base_size = 14
+  ) +
+  
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    ),
+    
+    strip.background = element_rect(
+      fill = "white",
+      color = "black"
+    ),
+    
+    strip.text = element_text(
+      face = "bold"
+    )
+  )
+
+
+print(p)
+
+
+ggsave(
+  "Chromatin_feature_pairwise_heatmaps_full.pdf",
+  p,
+  width = 11,
+  height = 8
+)
+
+
+# =========================
+# Optional: lower triangle only version
+# cleaner for publication
+# =========================
+
+heatmap_df_half <- heatmap_df %>%
+  mutate(
+    
+    i = match(
+      as.character(Group1),
+      group_order
+    ),
+    
+    j = match(
+      as.character(Group2),
+      group_order
+    )
+  ) %>%
+  filter(
+    i >= j
+  )
+
+
+p_half <- ggplot(
+  heatmap_df_half,
+  aes(
+    x = Group1,
+    y = Group2,
+    fill = mean_diff
+  )
+) +
+  
+  geom_tile(
+    color = "white",
+    linewidth = 0.8
+  ) +
+  
+  geom_text(
+    aes(
+      label = star
+    ),
+    color = "black",
+    size = 4.5,
+    fontface = "bold"
+  ) +
+  
+  facet_wrap(
+    ~ Feature,
+    ncol = 3
+  ) +
+  
+  scale_fill_gradient2(
+    low = "#7678ed",
+    mid = "white",
+    high = "#fe6d73",
+    midpoint = 0,
+    name = "Mean diff"
+  ) +
+  
+  labs(
+    title = "Pairwise group differences across chromatin features",
+    x = "Group",
+    y = "Group"
+  ) +
+  
+  theme_classic(
+    base_size = 14
+  ) +
+  
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 1
+    ),
+    
+    strip.background = element_rect(
+      fill = "white",
+      color = "black"
+    ),
+    
+    strip.text = element_text(
+      face = "bold"
+    )
+  )
+
+
+print(p_half)
+
+
+# ggsave(
+#   "Chromatin_feature_pairwise_heatmaps_lower_triangle.pdf",
+#   p_half,
+#   width = 11,
+#   height = 8
+# )
+```
+
+
+
+
+
