@@ -53,3 +53,11 @@ Sequencing data generated in this study are available at GEO under accession **G
 ## License
 
 This code is released under the MIT License.
+
+## Author and contact
+
+Code written by **Shan Jiang** (GitHub: @shanjiang0), University of Georgia.
+
+Corresponding author: **Dr. Wentao Li** (Wentao.Li@uga.edu), University of Georgia.
+
+For questions about the code, please open an issue in this repository or contact the corresponding author.
