@@ -6,7 +6,7 @@ This repository contains the analysis code used for the manuscript:
 
 The scripts are provided as used for the analyses in the paper. Shell scripts were run on the University of Georgia Sapelo2 high-performance computing cluster (SLURM), and file paths reflect our original project directories.
 
-Raw sequencing data were processed with the TARGET Damage-seq pipeline: [target-damage-seq](https://github.com/shanjiang0/target-damage-seq).
+Raw sequencing data were processed with the TARGET Damage-seq pipeline: [targeted-damage-seq](https://github.com/shanjiang0/targeted-damage-seq).
 
 ## Repository structure
 
