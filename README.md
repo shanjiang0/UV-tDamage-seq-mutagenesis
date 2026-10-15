@@ -6,8 +6,19 @@ This repository contains the analysis code used for the manuscript:
 
 The scripts are provided as used for the analyses in the paper. Shell scripts were run on the University of Georgia Sapelo2 high-performance computing cluster (SLURM), and file paths reflect our original project directories.
 
+Raw sequencing data were processed with the TARGET Damage-seq pipeline: [target-damage-seq](https://github.com/shanjiang0/target-damage-seq).
+
 ## Repository structure
 
+```
+UV-tDamage-seq-mutagenesis/
+├── Data_analysis/          # Linux shell and Python scripts for processing data and building analysis tables
+├── Figure1_Sfig1/          # R scripts for Figure 1 and Supplementary Figure 1
+├── Figure2_Fig3/           # R scripts for Figures 2 and 3
+├── Figure4-5_Sfig3567/     # R scripts for Figures 4–5 and Supplementary Figures 3, 5, 6 and 7
+├── LICENSE
+└── README.md
+```
 
 ## Data_analysis
 
@@ -56,7 +67,7 @@ This code is released under the MIT License.
 
 ## Author and contact
 
-Code written by **Shan Jiang** (GitHub: @shanjiang0), University of Georgia.
+Code written by **Shan Jiang** (GitHub: [@shanjiang0](https://github.com/shanjiang0)), University of Georgia.
 
 Corresponding author: **Dr. Wentao Li** (Wentao.Li@uga.edu), University of Georgia.
 
