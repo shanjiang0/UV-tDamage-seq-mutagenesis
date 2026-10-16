@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite it as below."
+title: "Analysis code for: Targeted DNA damage sequencing and multi-omic analysis reveal repair kinetics and genomic context shaping UV-induced mutagenesis"
+version: 1.0.0
+date-released: 2026-10-16
+url: "https://github.com/shanjiang0/UV-tDamage-seq-mutagenesis"
+repository-code: "https://github.com/shanjiang0/UV-tDamage-seq-mutagenesis"
+license: MIT
+authors:
+  - family-names: Jiang
+    given-names: Shan
+    affiliation: "University of Georgia"
+    orcid: "https://orcid.org/0009-0005-7559-1671"
+  - family-names: Li
+    given-names: Wentao
+    affiliation: "University of Georgia"
+keywords:
+  - DNA damage
+  - UV mutagenesis
+  - XR-seq
+  - multi-omics
