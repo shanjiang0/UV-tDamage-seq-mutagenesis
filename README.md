@@ -1,9 +1,10 @@
 # Targeted DNA damage sequencing and multi-omic analysis reveal repair kinetics and genomic context shaping UV-induced mutagenesis
 
+[![DOI](https://zenodo.org/badge/1420856162.svg)](https://doi.org/10.5281/zenodo.23419348)
+
 This repository contains the analysis code used for the manuscript:
 
 **Targeted DNA damage sequencing and multi-omic analysis reveal repair kinetics and genomic context shaping UV-induced mutagenesis**
-[![DOI](https://zenodo.org/badge/1420856162.svg)](https://doi.org/10.5281/zenodo.23419348)
 
 The scripts are provided as used for the analyses in the paper. Shell scripts were run on the University of Georgia Sapelo2 high-performance computing cluster (SLURM), and file paths reflect our original project directories.
 
